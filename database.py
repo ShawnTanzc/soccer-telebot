@@ -1,11 +1,16 @@
 import sqlite3
 import os
+import json
+import requests
 from datetime import datetime
 from typing import Optional
 
-# Use /data for persistent volume (Fly.io), fallback to local for development
-DATA_DIR = os.environ.get("DATA_DIR", "/data" if os.path.exists("/data") else ".")
-DB_PATH = os.path.join(DATA_DIR, "soccer_bot.db")
+# Use local database
+DB_PATH = "soccer_bot.db"
+
+# GitHub Gist for backup (set these as environment variables)
+GIST_ID = os.environ.get("GIST_ID", "")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
 
 def get_connection():
@@ -304,3 +309,136 @@ def delete_reminder(reminder_id: int):
     cursor.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
     conn.commit()
     conn.close()
+
+
+# ============ BACKUP/RESTORE TO GITHUB GIST ============
+
+def export_to_json() -> dict:
+    """Export all data to a JSON-serializable dict."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Export events
+    cursor.execute("SELECT * FROM events")
+    events = []
+    for row in cursor.fetchall():
+        events.append({
+            "id": row[0], "name": row[1], "date": row[2], "time": row[3],
+            "location": row[4], "max_players": row[5], "created_by": row[6],
+            "created_at": str(row[7]) if row[7] else None, "chat_id": row[8],
+            "booker_name": row[9], "booker_number": row[10], "payment_reminder_sent": row[11]
+        })
+    
+    # Export participants
+    cursor.execute("SELECT * FROM participants")
+    participants = []
+    for row in cursor.fetchall():
+        participants.append({
+            "id": row[0], "event_id": row[1], "user_id": row[2],
+            "username": row[3], "display_name": row[4], "paid": row[5],
+            "joined_at": str(row[6]) if row[6] else None
+        })
+    
+    # Export reminders
+    cursor.execute("SELECT * FROM reminders")
+    reminders = []
+    for row in cursor.fetchall():
+        reminders.append({
+            "id": row[0], "chat_id": row[1], "day_of_week": row[2],
+            "hour": row[3], "minute": row[4], "message": row[5], "enabled": row[6]
+        })
+    
+    conn.close()
+    
+    return {
+        "exported_at": datetime.now().isoformat(),
+        "events": events,
+        "participants": participants,
+        "reminders": reminders
+    }
+
+
+def import_from_json(data: dict):
+    """Import data from JSON dict, replacing existing data."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Clear existing data
+    cursor.execute("DELETE FROM participants")
+    cursor.execute("DELETE FROM events")
+    cursor.execute("DELETE FROM reminders")
+    
+    # Import events
+    for e in data.get("events", []):
+        cursor.execute("""
+            INSERT INTO events (id, name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, payment_reminder_sent)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (e["id"], e["name"], e["date"], e["time"], e["location"], e["max_players"], 
+              e["created_by"], e.get("chat_id"), e.get("booker_name"), e.get("booker_number"), e.get("payment_reminder_sent", 0)))
+    
+    # Import participants
+    for p in data.get("participants", []):
+        cursor.execute("""
+            INSERT INTO participants (id, event_id, user_id, username, display_name, paid)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (p["id"], p["event_id"], p["user_id"], p["username"], p["display_name"], p["paid"]))
+    
+    # Import reminders
+    for r in data.get("reminders", []):
+        cursor.execute("""
+            INSERT INTO reminders (id, chat_id, day_of_week, hour, minute, message, enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (r["id"], r["chat_id"], r["day_of_week"], r["hour"], r["minute"], r["message"], r.get("enabled", 1)))
+    
+    conn.commit()
+    conn.close()
+
+
+def backup_to_gist():
+    """Backup database to GitHub Gist."""
+    if not GIST_ID or not GITHUB_TOKEN:
+        return False
+    
+    try:
+        data = export_to_json()
+        response = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github.v3+json"
+            },
+            json={
+                "files": {
+                    "soccer_bot_backup.json": {
+                        "content": json.dumps(data, indent=2)
+                    }
+                }
+            }
+        )
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
+def restore_from_gist():
+    """Restore database from GitHub Gist."""
+    if not GIST_ID or not GITHUB_TOKEN:
+        return False
+    
+    try:
+        response = requests.get(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers={
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+        )
+        if response.status_code == 200:
+            gist_data = response.json()
+            content = gist_data["files"]["soccer_bot_backup.json"]["content"]
+            data = json.loads(content)
+            import_from_json(data)
+            return True
+    except Exception:
+        pass
+    return False

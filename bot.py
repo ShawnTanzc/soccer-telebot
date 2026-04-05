@@ -35,6 +35,17 @@ DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturda
 
 
 # Helper functions
+def trigger_backup():
+    """Trigger a backup to GitHub Gist."""
+    try:
+        if db.backup_to_gist():
+            logger.info("Backup to Gist successful")
+        else:
+            logger.debug("Backup skipped (not configured)")
+    except Exception as e:
+        logger.error(f"Backup failed: {e}")
+
+
 def get_display_name(user) -> str:
     if user.first_name and user.last_name:
         return f"{user.first_name} {user.last_name}"
@@ -276,6 +287,7 @@ async def event_booker_number(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=get_event_keyboard(event_id)
     )
     context.user_data.clear()
+    trigger_backup()
     return ConversationHandler.END
 
 
@@ -453,6 +465,7 @@ async def add_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ Added {name}!\n\n" + format_event_message(event, participants),
             reply_markup=get_event_keyboard(event_id)
         )
+        trigger_backup()
     else:
         await update.message.reply_text("Failed to add. Please try again.")
     
@@ -513,6 +526,7 @@ async def remove_person_callback(update: Update, context: ContextTypes.DEFAULT_T
             format_event_message(event, participants),
             reply_markup=get_event_keyboard(event_id)
         )
+        trigger_backup()
     else:
         await query.answer("Failed to remove.", show_alert=True)
 
@@ -615,12 +629,14 @@ async def confirm_paid_callback(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["paid_selection"] = set()
     
     await query.answer(f"Marked {count} as paid!")
+    trigger_backup()
     
     # Check if all paid - if so, delete event
     if db.check_and_delete_fully_paid_event(event_id):
         await query.edit_message_text(
             f"✅ All payments complete for {event['name']}!\n\nEvent has been archived. Thanks everyone!"
         )
+        trigger_backup()
     else:
         participants = db.get_participants(event_id)
         await query.edit_message_text(
@@ -1086,6 +1102,12 @@ async def post_init(app: Application):
 
 def main():
     db.init_db()
+    
+    # Try to restore from backup on startup
+    if db.restore_from_gist():
+        logger.info("Database restored from GitHub Gist backup")
+    else:
+        logger.info("No backup restored (new install or no backup configured)")
 
     app = Application.builder().token(TOKEN).post_init(post_init).build()
 
