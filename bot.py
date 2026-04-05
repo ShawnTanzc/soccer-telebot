@@ -1095,22 +1095,6 @@ async def post_init(app: Application):
         replace_existing=True
     )
     
-    # Schedule cleanup of old events (daily at 3am)
-    def cleanup_old():
-        deleted = db.cleanup_old_events(days_old=3)
-        if deleted > 0:
-            logger.info(f"Cleaned up {deleted} old events")
-            trigger_backup()
-    
-    scheduler.add_job(
-        cleanup_old,
-        'cron',
-        hour=3,
-        minute=0,
-        id='cleanup_old_events',
-        replace_existing=True
-    )
-    
     scheduler.start()
     app.bot_data["scheduler"] = scheduler
     logger.info("Scheduler started with %d reminders", len(reminders))
