@@ -1,0 +1,14 @@
+[Unit]
+Description=Soccer Telegram Bot
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/soccer-telebot
+ExecStart=/home/ubuntu/soccer-telebot/venv/bin/python bot.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
