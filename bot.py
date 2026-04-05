@@ -648,15 +648,61 @@ async def view_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ INLINE BUTTON HANDLERS ============
 
 def get_event_keyboard(event_id: int):
-    """Generate inline keyboard for an event."""
+    """Generate inline keyboard for an event (no payment button)."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add", callback_data=f"add_{event_id}"),
          InlineKeyboardButton("➖ Remove", callback_data=f"remove_{event_id}")],
-        [InlineKeyboardButton("💰 I Paid", callback_data=f"paid_{event_id}"),
-         InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{event_id}")],
-        [InlineKeyboardButton("🎲 Generate Teams", callback_data=f"teams_{event_id}")],
+        [InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{event_id}"),
+         InlineKeyboardButton("🎲 Generate Teams", callback_data=f"teams_{event_id}")],
         [InlineKeyboardButton("📋 Refresh", callback_data=f"view_{event_id}")]
     ])
+
+
+def get_payment_keyboard(event_id: int):
+    """Generate inline keyboard for payment reminders."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 Mark Paid", callback_data=f"paid_{event_id}")],
+        [InlineKeyboardButton("📋 Refresh", callback_data=f"viewpayment_{event_id}")]
+    ])
+
+
+def format_payment_message(event: dict, participants: list) -> str:
+    """Format payment status for display."""
+    total_cost = event.get("total_cost", 0)
+    num_participants = len(participants)
+    
+    msg = f"💰 *Payment Status*\n\n⚽ {event['name']}\n"
+    
+    if total_cost > 0 and num_participants > 0:
+        per_person = total_cost / num_participants
+        msg += f"💵 ${total_cost:.2f} ÷ {num_participants} = *${per_person:.2f} per person*\n"
+    
+    if event.get("booker_name"):
+        booker_info = event['booker_name']
+        if event.get("booker_number"):
+            booker_info += f"\n📱 PayNow: {event['booker_number']}"
+        msg += f"\n💳 Pay to: {booker_info}\n"
+    
+    paid = [p for p in participants if p["paid"]]
+    unpaid = [p for p in participants if not p["paid"]]
+    
+    msg += f"\n✅ *Paid ({len(paid)}):*\n"
+    if paid:
+        for p in paid:
+            name = p["display_name"] or p["username"] or "Unknown"
+            msg += f"  • {name}\n"
+    else:
+        msg += "  _None yet_\n"
+    
+    msg += f"\n❌ *Unpaid ({len(unpaid)}):*\n"
+    if unpaid:
+        for p in unpaid:
+            name = p["display_name"] or p["username"] or "Unknown"
+            msg += f"  • {name}\n"
+    else:
+        msg += "  _All paid!_\n"
+    
+    return msg
 
 
 def format_event_message(event: dict, participants: list) -> str:
@@ -962,8 +1008,8 @@ async def confirm_paid_callback(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         participants = db.get_participants(event_id)
         await query.edit_message_text(
-            format_event_message(event, participants),
-            reply_markup=get_event_keyboard(event_id)
+            format_payment_message(event, participants),
+            reply_markup=get_payment_keyboard(event_id)
         )
 
 
@@ -983,8 +1029,8 @@ async def cancel_paid_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     participants = db.get_participants(event_id)
     await query.answer()
     await query.edit_message_text(
-        format_event_message(event, participants),
-        reply_markup=get_event_keyboard(event_id)
+        format_payment_message(event, participants),
+        reply_markup=get_payment_keyboard(event_id)
     )
 
 
@@ -1002,6 +1048,25 @@ async def view_button_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text(
         format_event_message(event, participants),
         reply_markup=get_event_keyboard(event_id)
+    )
+
+
+async def view_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Refresh payment view."""
+    query = update.callback_query
+    event_id = int(query.data.replace("viewpayment_", ""))
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    participants = db.get_participants(event_id)
+    await query.answer()
+    await query.edit_message_text(
+        format_payment_message(event, participants),
+        parse_mode="Markdown",
+        reply_markup=get_payment_keyboard(event_id)
     )
 
 
@@ -1871,7 +1936,8 @@ async def check_payment_reminders(app: Application):
                         chat_id=event["chat_id"],
                         text=message,
                         parse_mode="Markdown",
-                        message_thread_id=payment_topic_id
+                        message_thread_id=payment_topic_id,
+                        reply_markup=get_payment_keyboard(event["id"])
                     )
                 except Exception as e:
                     logger.error(f"Failed to send payment reminder for event {event['id']}: {e}")
@@ -1969,6 +2035,7 @@ def main():
     app.add_handler(CallbackQueryHandler(confirm_paid_callback, pattern=r"^confirmpaid_\d+$"))
     app.add_handler(CallbackQueryHandler(cancel_paid_callback, pattern=r"^cancelpaid_\d+$"))
     app.add_handler(CallbackQueryHandler(view_button_callback, pattern=r"^view_\d+$"))
+    app.add_handler(CallbackQueryHandler(view_payment_callback, pattern=r"^viewpayment_\d+$"))
     app.add_handler(CallbackQueryHandler(remove_button_callback, pattern=r"^remove_\d+$"))
     app.add_handler(CallbackQueryHandler(remove_person_callback, pattern=r"^rm_\d+_-?\d+$"))
     
