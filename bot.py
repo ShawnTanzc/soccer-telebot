@@ -1881,6 +1881,7 @@ def main():
     text_filter = filters.TEXT & ~filters.COMMAND
     
     # Event creation conversation (button-based)
+    # per_chat=False allows conversation to continue across group->DM
     event_conv = ConversationHandler(
         entry_points=[
             CommandHandler("newevent", new_event_start, filters=filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP | filters.ChatType.PRIVATE),
@@ -1900,6 +1901,7 @@ def main():
             CallbackQueryHandler(cancel_callback, pattern=r"^cancel_event$")
         ],
         per_message=False,
+        per_chat=False,
     )
 
     # Reminder creation conversation (simplified - just day and time)
