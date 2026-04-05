@@ -116,6 +116,7 @@ def get_event(event_id: int) -> Optional[dict]:
 
 
 def get_upcoming_events() -> list:
+    """Get events from today onwards."""
     conn = get_connection()
     cursor = conn.cursor()
     today = datetime.now().strftime("%Y-%m-%d")
@@ -126,6 +127,28 @@ def get_upcoming_events() -> list:
         {"id": r[0], "name": r[1], "date": r[2], "time": r[3], "location": r[4], "max_players": r[5], "chat_id": r[6], "booker_name": r[7], "booker_number": r[8]}
         for r in rows
     ]
+
+
+def cleanup_old_events(days_old: int = 3) -> int:
+    """Delete events older than X days. Returns number deleted."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    from datetime import timedelta
+    cutoff_date = (datetime.now() - timedelta(days=days_old)).strftime("%Y-%m-%d")
+    
+    # Get IDs of old events
+    cursor.execute("SELECT id FROM events WHERE date < ?", (cutoff_date,))
+    old_event_ids = [row[0] for row in cursor.fetchall()]
+    
+    if old_event_ids:
+        # Delete participants first
+        cursor.execute(f"DELETE FROM participants WHERE event_id IN ({','.join('?' * len(old_event_ids))})", old_event_ids)
+        # Delete events
+        cursor.execute(f"DELETE FROM events WHERE id IN ({','.join('?' * len(old_event_ids))})", old_event_ids)
+    
+    conn.commit()
+    conn.close()
+    return len(old_event_ids)
 
 
 def get_events_needing_payment_reminder() -> list:
