@@ -948,7 +948,7 @@ def format_team_option(option_num: int, teams: tuple) -> str:
     msg += "\n".join([f"  • {name}" for name in team1])
     msg += f"\n\n🔵 *Team Blue* ({len(team2)})\n"
     msg += "\n".join([f"  • {name}" for name in team2])
-    msg += f"\n\n🟢 *Team Green* ({len(team3)})\n"
+    msg += f"\n\n⚪ *Team White* ({len(team3)})\n"
     msg += "\n".join([f"  • {name}" for name in team3])
     
     return msg
@@ -1061,7 +1061,7 @@ async def team_select_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     msg += "\n".join([f"  • {name}" for name in team1])
     msg += f"\n\n🔵 *Team Blue* ({len(team2)})\n"
     msg += "\n".join([f"  • {name}" for name in team2])
-    msg += f"\n\n🟢 *Team Green* ({len(team3)})\n"
+    msg += f"\n\n⚪ *Team White* ({len(team3)})\n"
     msg += "\n".join([f"  • {name}" for name in team3])
     msg += "\n\n_Good luck everyone!_ 🏆"
     
