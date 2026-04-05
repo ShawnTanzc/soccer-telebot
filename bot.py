@@ -295,6 +295,20 @@ async def new_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message:
         return ConversationHandler.END
     
+    # Check if we're in the correct topic
+    chat_id = update.effective_chat.id
+    settings = db.get_chat_settings(chat_id)
+    events_topic_id = settings.get("events_topic_id")
+    
+    if events_topic_id is not None:
+        current_topic_id = message.message_thread_id if hasattr(message, 'message_thread_id') and message.is_topic_message else None
+        if current_topic_id != events_topic_id:
+            await message.reply_text(
+                "⚠️ Events can only be created in the Upcoming Events topic.\n"
+                "Please go to that topic and try again."
+            )
+            return ConversationHandler.END
+    
     await message.reply_text(
         "⚽ Let's create a new event!\n\nSelect a date:",
         reply_markup=get_date_keyboard()
