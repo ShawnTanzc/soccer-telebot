@@ -248,6 +248,9 @@ async def event_max_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def event_booker(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return EVENT_BOOKER
+    
     booker_name = update.message.text.strip()
     context.user_data["booker_name"] = booker_name
     
@@ -258,6 +261,9 @@ async def event_booker(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def event_booker_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return EVENT_BOOKER_NUMBER
+    
     booker_number = update.message.text.strip()
     context.user_data["booker_number"] = booker_number
     
@@ -268,6 +274,9 @@ async def event_booker_number(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return EVENT_COST
+    
     cost_text = update.message.text.strip().replace("$", "")
     
     try:
