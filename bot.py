@@ -356,10 +356,8 @@ async def view_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def get_event_keyboard(event_id: int):
     """Generate inline keyboard for an event."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Join", callback_data=f"join_{event_id}"),
-         InlineKeyboardButton("❌ Leave", callback_data=f"leave_{event_id}")],
-        [InlineKeyboardButton("➕ Add Friend", callback_data=f"addfriend_{event_id}"),
-         InlineKeyboardButton("➖ Remove Friend", callback_data=f"removefriend_{event_id}")],
+        [InlineKeyboardButton("➕ Add", callback_data=f"add_{event_id}"),
+         InlineKeyboardButton("➖ Remove", callback_data=f"remove_{event_id}")],
         [InlineKeyboardButton("💰 I Paid", callback_data=f"paid_{event_id}"),
          InlineKeyboardButton("📋 Refresh", callback_data=f"view_{event_id}")]
     ])
@@ -405,9 +403,9 @@ def format_event_message(event: dict, participants: list) -> str:
     return msg
 
 
-async def join_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    event_id = int(query.data.replace("join_", ""))
+    event_id = int(query.data.replace("add_", ""))
     
     event = db.get_event(event_id)
     if not event:
@@ -419,46 +417,104 @@ async def join_button_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("Event is full!", show_alert=True)
         return
     
-    user = update.effective_user
-    success = db.add_participant(
-        event_id=event_id,
-        user_id=user.id,
-        username=user.username,
-        display_name=get_display_name(user)
+    context.user_data["add_event_id"] = event_id
+    await query.answer()
+    await query.message.reply_text(
+        "Type the name to add:\n\n(or /cancel to cancel)"
     )
+    return ADD_FRIEND_NAME
+
+
+async def add_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    event_id = context.user_data.get("add_event_id")
+    
+    if not event_id:
+        await update.message.reply_text("Something went wrong. Please try again.")
+        return ConversationHandler.END
+    
+    event = db.get_event(event_id)
+    if not event:
+        await update.message.reply_text("Event not found.")
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    participants = db.get_participants(event_id)
+    if len(participants) >= event["max_players"]:
+        await update.message.reply_text("Event is full!")
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    success = db.add_guest(event_id, name, update.effective_user.id)
     
     if success:
-        await query.answer("You've joined!")
         participants = db.get_participants(event_id)
-        await query.edit_message_text(
-            format_event_message(event, participants),
+        await update.message.reply_text(
+            f"✅ Added {name}!\n\n" + format_event_message(event, participants),
             reply_markup=get_event_keyboard(event_id)
         )
     else:
-        await query.answer("You're already in this event!", show_alert=True)
+        await update.message.reply_text("Failed to add. Please try again.")
+    
+    context.user_data.clear()
+    return ConversationHandler.END
 
 
-async def leave_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def remove_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    event_id = int(query.data.replace("leave_", ""))
+    event_id = int(query.data.replace("remove_", ""))
     
     event = db.get_event(event_id)
     if not event:
         await query.answer("Event not found!", show_alert=True)
         return
     
-    user = update.effective_user
-    success = db.remove_participant(event_id, user.id)
+    participants = db.get_participants(event_id)
+    
+    if not participants:
+        await query.answer("No one to remove!", show_alert=True)
+        return
+    
+    # Show buttons for each participant
+    buttons = []
+    for p in participants:
+        name = p["display_name"] or p["username"] or "Unknown"
+        buttons.append([InlineKeyboardButton(
+            f"❌ {name}", 
+            callback_data=f"rm_{event_id}_{p['user_id']}"
+        )])
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"view_{event_id}")])
+    
+    await query.answer()
+    await query.edit_message_text(
+        "Select who to remove:",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def remove_person_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    # Format: rm_{event_id}_{user_id}
+    parts = query.data.split("_")
+    event_id = int(parts[1])
+    user_id = int(parts[2])
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    success = db.remove_participant(event_id, user_id)
     
     if success:
-        await query.answer("You've left the event.")
+        await query.answer("Removed!")
         participants = db.get_participants(event_id)
         await query.edit_message_text(
             format_event_message(event, participants),
             reply_markup=get_event_keyboard(event_id)
         )
     else:
-        await query.answer("You weren't in this event!", show_alert=True)
+        await query.answer("Failed to remove.", show_alert=True)
 
 
 async def paid_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -470,25 +526,128 @@ async def paid_button_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("Event not found!", show_alert=True)
         return
     
-    user = update.effective_user
-    success = db.set_payment_status(event_id, user.id, True)
+    # Show list of participants to mark as paid (with checkboxes)
+    participants = db.get_participants(event_id)
+    unpaid = [p for p in participants if not p["paid"]]
     
-    if success:
-        await query.answer("Marked as paid!")
-        
-        # Check if all paid - if so, delete event
-        if db.check_and_delete_fully_paid_event(event_id):
-            await query.edit_message_text(
-                f"✅ All payments complete for {event['name']}!\n\nEvent has been archived. Thanks everyone!"
-            )
-        else:
-            participants = db.get_participants(event_id)
-            await query.edit_message_text(
-                format_event_message(event, participants),
-                reply_markup=get_event_keyboard(event_id)
-            )
+    if not unpaid:
+        await query.answer("Everyone has paid!", show_alert=True)
+        return
+    
+    # Initialize selection if not exists
+    if "paid_selection" not in context.user_data:
+        context.user_data["paid_selection"] = set()
+    
+    await query.answer()
+    await show_paid_selection(query, event_id, context)
+
+
+async def show_paid_selection(query, event_id: int, context):
+    """Show the payment selection screen with checkboxes."""
+    event = db.get_event(event_id)
+    participants = db.get_participants(event_id)
+    unpaid = [p for p in participants if not p["paid"]]
+    
+    selected = context.user_data.get("paid_selection", set())
+    
+    buttons = []
+    for p in unpaid:
+        name = p["display_name"] or p["username"] or "Unknown"
+        user_id = p["user_id"]
+        checkbox = "✅" if user_id in selected else "⬜"
+        buttons.append([InlineKeyboardButton(
+            f"{checkbox} {name}", 
+            callback_data=f"togglepaid_{event_id}_{user_id}"
+        )])
+    
+    # Add confirm and back buttons
+    if selected:
+        buttons.append([InlineKeyboardButton(f"💰 Confirm ({len(selected)} selected)", callback_data=f"confirmpaid_{event_id}")])
+    buttons.append([InlineKeyboardButton("🔙 Back", callback_data=f"cancelpaid_{event_id}")])
+    
+    await query.edit_message_text(
+        "Select who paid (tap to toggle):",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def toggle_paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    # Format: togglepaid_{event_id}_{user_id}
+    parts = query.data.split("_")
+    event_id = int(parts[1])
+    user_id = int(parts[2])
+    
+    # Toggle selection
+    if "paid_selection" not in context.user_data:
+        context.user_data["paid_selection"] = set()
+    
+    if user_id in context.user_data["paid_selection"]:
+        context.user_data["paid_selection"].remove(user_id)
     else:
-        await query.answer("Join the event first!", show_alert=True)
+        context.user_data["paid_selection"].add(user_id)
+    
+    await query.answer()
+    await show_paid_selection(query, event_id, context)
+
+
+async def confirm_paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    # Format: confirmpaid_{event_id}
+    event_id = int(query.data.replace("confirmpaid_", ""))
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    selected = context.user_data.get("paid_selection", set())
+    
+    if not selected:
+        await query.answer("No one selected!", show_alert=True)
+        return
+    
+    # Mark all selected as paid
+    for user_id in selected:
+        db.set_payment_status(event_id, user_id, True)
+    
+    count = len(selected)
+    context.user_data["paid_selection"] = set()
+    
+    await query.answer(f"Marked {count} as paid!")
+    
+    # Check if all paid - if so, delete event
+    if db.check_and_delete_fully_paid_event(event_id):
+        await query.edit_message_text(
+            f"✅ All payments complete for {event['name']}!\n\nEvent has been archived. Thanks everyone!"
+        )
+    else:
+        participants = db.get_participants(event_id)
+        await query.edit_message_text(
+            format_event_message(event, participants),
+            reply_markup=get_event_keyboard(event_id)
+        )
+
+
+async def cancel_paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    # Format: cancelpaid_{event_id}
+    event_id = int(query.data.replace("cancelpaid_", ""))
+    
+    # Clear selection
+    context.user_data["paid_selection"] = set()
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    participants = db.get_participants(event_id)
+    await query.answer()
+    await query.edit_message_text(
+        format_event_message(event, participants),
+        reply_markup=get_event_keyboard(event_id)
+    )
 
 
 async def view_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -508,64 +667,8 @@ async def view_button_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def add_friend_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    event_id = int(query.data.replace("addfriend_", ""))
-    
-    event = db.get_event(event_id)
-    if not event:
-        await query.answer("Event not found!", show_alert=True)
-        return
-    
-    participants = db.get_participants(event_id)
-    if len(participants) >= event["max_players"]:
-        await query.answer("Event is full!", show_alert=True)
-        return
-    
-    context.user_data["add_friend_event_id"] = event_id
-    await query.answer()
-    await query.message.reply_text(
-        f"Type your friend's name to add them to the event:\n\n(or /cancel to cancel)"
-    )
-    return ADD_FRIEND_NAME
-
-
-async def add_friend_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    friend_name = update.message.text.strip()
-    event_id = context.user_data.get("add_friend_event_id")
-    
-    if not event_id:
-        await update.message.reply_text("Something went wrong. Please try again.")
-        return ConversationHandler.END
-    
-    event = db.get_event(event_id)
-    if not event:
-        await update.message.reply_text("Event not found.")
-        context.user_data.clear()
-        return ConversationHandler.END
-    
-    participants = db.get_participants(event_id)
-    if len(participants) >= event["max_players"]:
-        await update.message.reply_text("Event is full!")
-        context.user_data.clear()
-        return ConversationHandler.END
-    
-    success = db.add_guest(event_id, friend_name, update.effective_user.id)
-    
-    if success:
-        participants = db.get_participants(event_id)
-        await update.message.reply_text(
-            f"✅ Added {friend_name} to the event!\n\n" + format_event_message(event, participants),
-            reply_markup=get_event_keyboard(event_id)
-        )
-    else:
-        await update.message.reply_text("Failed to add friend. Please try again.")
-    
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
-async def remove_friend_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def old_remove_friend_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Deprecated - keeping for reference
     query = update.callback_query
     event_id = int(query.data.replace("removefriend_", ""))
     
@@ -1024,23 +1127,24 @@ def main():
     app.add_handler(CommandHandler("event", view_event))
 
     # Inline button handlers for events
-    app.add_handler(CallbackQueryHandler(join_button_callback, pattern=r"^join_\d+$"))
-    app.add_handler(CallbackQueryHandler(leave_button_callback, pattern=r"^leave_\d+$"))
     app.add_handler(CallbackQueryHandler(paid_button_callback, pattern=r"^paid_\d+$"))
+    app.add_handler(CallbackQueryHandler(toggle_paid_callback, pattern=r"^togglepaid_\d+_-?\d+$"))
+    app.add_handler(CallbackQueryHandler(confirm_paid_callback, pattern=r"^confirmpaid_\d+$"))
+    app.add_handler(CallbackQueryHandler(cancel_paid_callback, pattern=r"^cancelpaid_\d+$"))
     app.add_handler(CallbackQueryHandler(view_button_callback, pattern=r"^view_\d+$"))
-    app.add_handler(CallbackQueryHandler(remove_friend_button_callback, pattern=r"^removefriend_\d+$"))
-    app.add_handler(CallbackQueryHandler(remove_guest_callback, pattern=r"^rmguest_\d+_-?\d+$"))
+    app.add_handler(CallbackQueryHandler(remove_button_callback, pattern=r"^remove_\d+$"))
+    app.add_handler(CallbackQueryHandler(remove_person_callback, pattern=r"^rm_\d+_-?\d+$"))
 
-    # Add friend conversation
-    add_friend_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(add_friend_button_callback, pattern=r"^addfriend_\d+$")],
+    # Add person conversation
+    add_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_button_callback, pattern=r"^add_\d+$")],
         states={
-            ADD_FRIEND_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_friend_name)],
+            ADD_FRIEND_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name_handler)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         per_message=False,
     )
-    app.add_handler(add_friend_conv)
+    app.add_handler(add_conv)
 
     app.add_handler(CommandHandler("paid", mark_paid))
     app.add_handler(CommandHandler("setpaid", set_paid))
