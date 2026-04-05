@@ -3,6 +3,7 @@ import asyncio
 import logging
 import random
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -13,6 +14,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 import database as db
+
+# Singapore timezone
+SG_TZ = ZoneInfo("Asia/Singapore")
 
 load_dotenv()
 
@@ -80,13 +84,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def server_time_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current server time."""
-    now = datetime.now()
+    now_sg = datetime.now(SG_TZ)
     await update.message.reply_text(
-        f"🕐 *Server Time*\n\n"
-        f"Date: {now.strftime('%A, %d %B %Y')}\n"
-        f"Time: {now.strftime('%H:%M:%S')}\n"
-        f"Timezone: UTC (Railway default)\n\n"
-        f"_Singapore is UTC+8, so add 8 hours to this time._",
+        f"🕐 *Server Time (Singapore)*\n\n"
+        f"Date: {now_sg.strftime('%A, %d %B %Y')}\n"
+        f"Time: {now_sg.strftime('%H:%M:%S')} SGT",
         parse_mode="Markdown"
     )
 
@@ -1866,8 +1868,8 @@ async def test_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Reminder Topic ID: {settings.get('reminder_topic_id')}"
     )
     
-    # Calculate date 2 weeks from now
-    booking_date = datetime.now() + timedelta(days=14)
+    # Calculate date 2 weeks from now (Singapore time)
+    booking_date = datetime.now(SG_TZ) + timedelta(days=14)
     booking_date_str = booking_date.strftime("%A, %d %B")
     
     message = (
@@ -1898,8 +1900,8 @@ def schedule_reminder(scheduler: AsyncIOScheduler, app: Application, reminder: d
         try:
             logger.info(f"Sending ballot reminder for chat {reminder['chat_id']}")
             
-            # Calculate date 2 weeks from now
-            booking_date = datetime.now() + timedelta(days=14)
+            # Calculate date 2 weeks from now (Singapore time)
+            booking_date = datetime.now(SG_TZ) + timedelta(days=14)
             booking_date_str = booking_date.strftime("%A, %d %B")
             
             message = (
@@ -1926,15 +1928,15 @@ def schedule_reminder(scheduler: AsyncIOScheduler, app: Application, reminder: d
 
     scheduler.add_job(
         send_reminder,
-        CronTrigger(day_of_week=reminder["day_of_week"], hour=reminder["hour"], minute=reminder["minute"]),
+        CronTrigger(day_of_week=reminder["day_of_week"], hour=reminder["hour"], minute=reminder["minute"], timezone=SG_TZ),
         id=f"reminder_{reminder['id']}",
         replace_existing=True
     )
-    logger.info(f"Scheduled reminder {reminder['id']} for day {reminder['day_of_week']} at {reminder['hour']}:{reminder['minute']}")
+    logger.info(f"Scheduled reminder {reminder['id']} for day {reminder['day_of_week']} at {reminder['hour']}:{reminder['minute']} SGT")
 
 
 def get_event_end_time(event: dict) -> datetime:
-    """Calculate when an event ends based on date and time slot."""
+    """Calculate when an event ends based on date and time slot (Singapore time)."""
     date_obj = datetime.strptime(event["date"], "%Y-%m-%d")
     time_str = event["time"]
     
@@ -1945,13 +1947,14 @@ def get_event_end_time(event: dict) -> datetime:
         end_time_str = time_str
     
     end_time = datetime.strptime(end_time_str, "%H:%M")
-    return date_obj.replace(hour=end_time.hour, minute=end_time.minute)
+    # Return as Singapore timezone aware datetime
+    return date_obj.replace(hour=end_time.hour, minute=end_time.minute, tzinfo=SG_TZ)
 
 
 async def check_payment_reminders(app: Application):
     """Check for events that need payment reminders (1 hour after match ends)."""
     events = db.get_events_needing_payment_reminder()
-    now = datetime.now()
+    now = datetime.now(SG_TZ)  # Use Singapore time
     
     for event in events:
         end_time = get_event_end_time(event)
