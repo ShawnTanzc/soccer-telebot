@@ -280,6 +280,9 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     date_obj = datetime.strptime(context.user_data["event_date"], "%Y-%m-%d")
     event_name = f"Soccer - {date_obj.strftime('%a %d %b')}"
     
+    # Get message_thread_id for forum topics support
+    message_thread_id = update.message.message_thread_id if update.message.is_topic_message else None
+    
     event_id = db.create_event(
         name=event_name,
         date=context.user_data["event_date"],
@@ -290,7 +293,8 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id,
         booker_name=context.user_data["booker_name"],
         booker_number=context.user_data["booker_number"],
-        total_cost=total_cost
+        total_cost=total_cost,
+        message_thread_id=message_thread_id
     )
     
     display_date = date_obj.strftime("%A, %d %B %Y")
@@ -722,6 +726,7 @@ def get_edit_menu_keyboard(event_id: int):
          InlineKeyboardButton("🕐 Time", callback_data=f"edittime_{event_id}")],
         [InlineKeyboardButton("📍 Location", callback_data=f"editloc_{event_id}"),
          InlineKeyboardButton("💰 Cost", callback_data=f"editcost_{event_id}")],
+        [InlineKeyboardButton("📢 Set Notification Topic", callback_data=f"edittopic_{event_id}")],
         [InlineKeyboardButton("⬅️ Back", callback_data=f"view_{event_id}")]
     ])
 
@@ -906,6 +911,92 @@ async def edit_cost_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_event_keyboard(event_id)
     )
     return ConversationHandler.END
+
+
+async def edit_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show instructions for setting notification topic."""
+    query = update.callback_query
+    event_id = int(query.data.replace("edittopic_", ""))
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    current_topic = event.get("message_thread_id")
+    topic_status = f"Current: Topic ID {current_topic}" if current_topic else "Current: Main chat (no topic)"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📍 Use This Topic", callback_data=f"settopic_{event_id}")],
+        [InlineKeyboardButton("🚫 Use Main Chat", callback_data=f"cleartopic_{event_id}")],
+        [InlineKeyboardButton("⬅️ Back", callback_data=f"edit_{event_id}")]
+    ])
+    
+    await query.answer()
+    await query.edit_message_text(
+        f"📢 *Set Notification Topic*\n\n"
+        f"⚽ {event['name']}\n"
+        f"{topic_status}\n\n"
+        f"To change where payment reminders are sent:\n\n"
+        f"• *Use This Topic* - Send reminders to the topic where you click this button\n"
+        f"• *Use Main Chat* - Send reminders to the main group chat",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+async def set_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set the current topic as the notification destination."""
+    query = update.callback_query
+    event_id = int(query.data.replace("settopic_", ""))
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    # Get the message_thread_id from the current message context
+    message_thread_id = query.message.message_thread_id if query.message.is_topic_message else None
+    
+    db.update_event(event_id, message_thread_id=message_thread_id)
+    trigger_backup()
+    
+    if message_thread_id:
+        await query.answer("Notifications will be sent to this topic!")
+    else:
+        await query.answer("Notifications will be sent to main chat!")
+    
+    # Return to event view
+    event = db.get_event(event_id)
+    participants = db.get_participants(event_id)
+    await query.edit_message_text(
+        format_event_message(event, participants),
+        reply_markup=get_event_keyboard(event_id)
+    )
+
+
+async def clear_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear the topic setting, use main chat."""
+    query = update.callback_query
+    event_id = int(query.data.replace("cleartopic_", ""))
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    db.update_event(event_id, message_thread_id=None)
+    trigger_backup()
+    
+    await query.answer("Notifications will be sent to main chat!")
+    
+    # Return to event view
+    event = db.get_event(event_id)
+    participants = db.get_participants(event_id)
+    await query.edit_message_text(
+        format_event_message(event, participants),
+        reply_markup=get_event_keyboard(event_id)
+    )
 
 
 # ============ TEAM GENERATION HANDLERS ============
@@ -1465,7 +1556,8 @@ async def check_payment_reminders(app: Application):
                     await app.bot.send_message(
                         chat_id=event["chat_id"],
                         text=message,
-                        parse_mode="Markdown"
+                        parse_mode="Markdown",
+                        message_thread_id=event.get("message_thread_id")
                     )
                 except Exception as e:
                     logger.error(f"Failed to send payment reminder for event {event['id']}: {e}")
@@ -1566,6 +1658,9 @@ def main():
     app.add_handler(CallbackQueryHandler(new_time_selected_callback, pattern=r"^newetime_"))
     app.add_handler(CallbackQueryHandler(edit_location_callback, pattern=r"^editloc_\d+$"))
     app.add_handler(CallbackQueryHandler(new_location_selected_callback, pattern=r"^neweloc_"))
+    app.add_handler(CallbackQueryHandler(edit_topic_callback, pattern=r"^edittopic_\d+$"))
+    app.add_handler(CallbackQueryHandler(set_topic_callback, pattern=r"^settopic_\d+$"))
+    app.add_handler(CallbackQueryHandler(clear_topic_callback, pattern=r"^cleartopic_\d+$"))
     
     # Edit cost conversation
     edit_cost_conv = ConversationHandler(

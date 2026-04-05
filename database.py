@@ -35,7 +35,8 @@ def init_db():
             booker_name TEXT,
             booker_number TEXT,
             payment_reminder_sent INTEGER DEFAULT 0,
-            total_cost REAL DEFAULT 0
+            total_cost REAL DEFAULT 0,
+            message_thread_id INTEGER
         )
     """)
 
@@ -58,6 +59,10 @@ def init_db():
         pass
     try:
         cursor.execute("ALTER TABLE events ADD COLUMN total_cost REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE events ADD COLUMN message_thread_id INTEGER")
     except sqlite3.OperationalError:
         pass
 
@@ -92,12 +97,12 @@ def init_db():
 
 
 # Event functions
-def create_event(name: str, date: str, time: str, location: str, max_players: int, created_by: int, chat_id: int = None, booker_name: str = None, booker_number: str = None, total_cost: float = 0) -> int:
+def create_event(name: str, date: str, time: str, location: str, max_players: int, created_by: int, chat_id: int = None, booker_name: str = None, booker_number: str = None, total_cost: float = 0, message_thread_id: int = None) -> int:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO events (name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, total_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, total_cost)
+        "INSERT INTO events (name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, total_cost, message_thread_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, total_cost, message_thread_id)
     )
     event_id = cursor.lastrowid
     conn.commit()
@@ -108,7 +113,7 @@ def create_event(name: str, date: str, time: str, location: str, max_players: in
 def get_event(event_id: int) -> Optional[dict]:
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, payment_reminder_sent, total_cost FROM events WHERE id = ?", (event_id,))
+    cursor.execute("SELECT id, name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, payment_reminder_sent, total_cost, message_thread_id FROM events WHERE id = ?", (event_id,))
     row = cursor.fetchone()
     conn.close()
     if row:
@@ -116,7 +121,8 @@ def get_event(event_id: int) -> Optional[dict]:
             "id": row[0], "name": row[1], "date": row[2], "time": row[3],
             "location": row[4], "max_players": row[5], "created_by": row[6],
             "chat_id": row[7], "booker_name": row[8], "booker_number": row[9], 
-            "payment_reminder_sent": row[10], "total_cost": row[11] or 0
+            "payment_reminder_sent": row[10], "total_cost": row[11] or 0,
+            "message_thread_id": row[12]
         }
     return None
 
@@ -126,11 +132,11 @@ def get_upcoming_events() -> list:
     conn = get_connection()
     cursor = conn.cursor()
     today = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute("SELECT id, name, date, time, location, max_players, chat_id, booker_name, booker_number, total_cost FROM events WHERE date >= ? ORDER BY date, time", (today,))
+    cursor.execute("SELECT id, name, date, time, location, max_players, chat_id, booker_name, booker_number, total_cost, message_thread_id FROM events WHERE date >= ? ORDER BY date, time", (today,))
     rows = cursor.fetchall()
     conn.close()
     return [
-        {"id": r[0], "name": r[1], "date": r[2], "time": r[3], "location": r[4], "max_players": r[5], "chat_id": r[6], "booker_name": r[7], "booker_number": r[8], "total_cost": r[9] or 0}
+        {"id": r[0], "name": r[1], "date": r[2], "time": r[3], "location": r[4], "max_players": r[5], "chat_id": r[6], "booker_name": r[7], "booker_number": r[8], "total_cost": r[9] or 0, "message_thread_id": r[10]}
         for r in rows
     ]
 
@@ -177,7 +183,7 @@ def get_events_needing_payment_reminder() -> list:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, total_cost 
+        SELECT id, name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, total_cost, message_thread_id 
         FROM events 
         WHERE payment_reminder_sent = 0 AND chat_id IS NOT NULL
     """)
@@ -185,7 +191,7 @@ def get_events_needing_payment_reminder() -> list:
     conn.close()
     return [
         {"id": r[0], "name": r[1], "date": r[2], "time": r[3], "location": r[4], 
-         "max_players": r[5], "created_by": r[6], "chat_id": r[7], "booker_name": r[8], "booker_number": r[9], "total_cost": r[10] or 0}
+         "max_players": r[5], "created_by": r[6], "chat_id": r[7], "booker_name": r[8], "booker_number": r[9], "total_cost": r[10] or 0, "message_thread_id": r[11]}
         for r in rows
     ]
 
@@ -371,7 +377,8 @@ def export_to_json() -> dict:
             "location": row[4], "max_players": row[5], "created_by": row[6],
             "created_at": str(row[7]) if row[7] else None, "chat_id": row[8],
             "booker_name": row[9], "booker_number": row[10], "payment_reminder_sent": row[11],
-            "total_cost": row[12] if len(row) > 12 else 0
+            "total_cost": row[12] if len(row) > 12 else 0,
+            "message_thread_id": row[13] if len(row) > 13 else None
         })
     
     # Export participants
@@ -416,10 +423,10 @@ def import_from_json(data: dict):
     # Import events
     for e in data.get("events", []):
         cursor.execute("""
-            INSERT INTO events (id, name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, payment_reminder_sent, total_cost)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO events (id, name, date, time, location, max_players, created_by, chat_id, booker_name, booker_number, payment_reminder_sent, total_cost, message_thread_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (e["id"], e["name"], e["date"], e["time"], e["location"], e["max_players"], 
-              e["created_by"], e.get("chat_id"), e.get("booker_name"), e.get("booker_number"), e.get("payment_reminder_sent", 0), e.get("total_cost", 0)))
+              e["created_by"], e.get("chat_id"), e.get("booker_name"), e.get("booker_number"), e.get("payment_reminder_sent", 0), e.get("total_cost", 0), e.get("message_thread_id")))
     
     # Import participants
     for p in data.get("participants", []):
