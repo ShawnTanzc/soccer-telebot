@@ -295,20 +295,72 @@ async def new_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message:
         return ConversationHandler.END
     
-    # Check if we're in the correct topic
     chat_id = update.effective_chat.id
-    settings = db.get_chat_settings(chat_id)
-    events_topic_id = settings.get("events_topic_id")
+    user_id = update.effective_user.id if update.effective_user else None
     
-    if events_topic_id is not None:
-        current_topic_id = message.message_thread_id if hasattr(message, 'message_thread_id') and message.is_topic_message else None
-        if current_topic_id != events_topic_id:
+    # Check if this is a group/channel or private chat
+    is_private = update.effective_chat.type == "private"
+    
+    if is_private:
+        # Already in private chat, continue with event creation
+        # Check if we have a target group stored
+        if "target_chat_id" not in context.user_data:
             await message.reply_text(
-                "⚠️ Events can only be created in the Upcoming Events topic.\n"
-                "Please go to that topic and try again."
+                "⚠️ Please start event creation from your group chat using /newevent.\n"
+                "I'll then message you privately to complete the setup."
             )
             return ConversationHandler.END
+    else:
+        # In group - check if we're in the correct topic
+        settings = db.get_chat_settings(chat_id)
+        events_topic_id = settings.get("events_topic_id")
+        
+        if events_topic_id is not None:
+            current_topic_id = message.message_thread_id if hasattr(message, 'message_thread_id') and message.is_topic_message else None
+            if current_topic_id != events_topic_id:
+                await message.reply_text(
+                    "⚠️ Events can only be created in the Upcoming Events topic.\n"
+                    "Please go to that topic and try again."
+                )
+                return ConversationHandler.END
+        
+        # Store target chat info for posting later
+        context.user_data["target_chat_id"] = chat_id
+        context.user_data["target_topic_id"] = events_topic_id
+        
+        # Try to send private message
+        if user_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="⚽ Let's create a new event!\n\nSelect a date:",
+                    reply_markup=get_date_keyboard()
+                )
+                await message.reply_text(
+                    "📩 I've sent you a private message to set up the event.\n"
+                    "Please check your DMs!"
+                )
+                return EVENT_DATE
+            except Exception:
+                # User hasn't started private chat with bot
+                await message.reply_text(
+                    "⚠️ I can't message you privately.\n\n"
+                    "Please start a chat with me first by clicking @YourBotUsername and pressing START, "
+                    "then try /newevent again.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💬 Start Private Chat", url=f"https://t.me/{(await context.bot.get_me()).username}")]
+                    ])
+                )
+                return ConversationHandler.END
+        
+        # Fallback: do it in group
+        await message.reply_text(
+            "⚽ Let's create a new event!\n\nSelect a date:",
+            reply_markup=get_date_keyboard()
+        )
+        return EVENT_DATE
     
+    # Private chat with target set
     await message.reply_text(
         "⚽ Let's create a new event!\n\nSelect a date:",
         reply_markup=get_date_keyboard()
@@ -448,10 +500,20 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     date_obj = datetime.strptime(context.user_data["event_date"], "%Y-%m-%d")
     event_name = f"Soccer - {date_obj.strftime('%a %d %b')}"
     
-    # Get message_thread_id for forum topics support
-    message_thread_id = None
-    if hasattr(message, 'is_topic_message') and message.is_topic_message:
-        message_thread_id = message.message_thread_id
+    # Check if we have a target group (created from group, setup in DM)
+    target_chat_id = context.user_data.get("target_chat_id")
+    target_topic_id = context.user_data.get("target_topic_id")
+    
+    if target_chat_id:
+        # Event was created from group, post to group
+        chat_id = target_chat_id
+        message_thread_id = target_topic_id
+    else:
+        # Event created directly in chat
+        chat_id = update.effective_chat.id
+        message_thread_id = None
+        if hasattr(message, 'is_topic_message') and message.is_topic_message:
+            message_thread_id = message.message_thread_id
     
     event_id = db.create_event(
         name=event_name,
@@ -460,7 +522,7 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
         location=context.user_data.get("event_location", ""),
         max_players=context.user_data["max_players"],
         created_by=update.effective_user.id if update.effective_user else 0,
-        chat_id=update.effective_chat.id,
+        chat_id=chat_id,
         booker_name=context.user_data["booker_name"],
         booker_number=context.user_data["booker_number"],
         total_cost=total_cost,
@@ -469,7 +531,7 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     display_date = date_obj.strftime("%A, %d %B %Y")
     
-    await message.reply_text(
+    event_message = (
         f"✅ Event created!\n\n"
         f"⚽ {event_name}\n"
         f"📅 {display_date}\n"
@@ -477,9 +539,25 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 {context.user_data.get('event_location', 'TBD')}\n"
         f"🧾 Booker: {context.user_data['booker_name']} ({context.user_data['booker_number']})\n"
         f"💰 Total cost: ${total_cost:.2f}\n"
-        f"👥 0/{context.user_data['max_players']} players",
-        reply_markup=get_event_keyboard(event_id)
+        f"👥 0/{context.user_data['max_players']} players"
     )
+    
+    if target_chat_id:
+        # Post to group and confirm in DM
+        await context.bot.send_message(
+            chat_id=target_chat_id,
+            text=event_message,
+            reply_markup=get_event_keyboard(event_id),
+            message_thread_id=target_topic_id
+        )
+        await message.reply_text("✅ Event posted to the group!")
+    else:
+        # Reply directly
+        await message.reply_text(
+            event_message,
+            reply_markup=get_event_keyboard(event_id)
+        )
+    
     context.user_data.clear()
     trigger_backup()
     return ConversationHandler.END
