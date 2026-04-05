@@ -1621,13 +1621,13 @@ def main():
 
     app = Application.builder().token(TOKEN).post_init(post_init).build()
 
-    # Filter for text messages (both regular and channel posts)
-    text_filter = (filters.TEXT & ~filters.COMMAND) | (filters.UpdateType.CHANNEL_POST & filters.TEXT)
+    # Filter for text messages (regular messages, channel posts, and forum topics)
+    text_filter = filters.TEXT & ~filters.COMMAND
     
     # Event creation conversation (button-based)
     event_conv = ConversationHandler(
         entry_points=[
-            CommandHandler("newevent", new_event_start),
+            CommandHandler("newevent", new_event_start, filters=filters.ChatType.GROUPS | filters.ChatType.SUPERGROUP | filters.ChatType.PRIVATE),
             MessageHandler(filters.UpdateType.CHANNEL_POST & filters.Regex(r'^/newevent'), new_event_start)
         ],
         states={
