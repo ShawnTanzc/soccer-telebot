@@ -434,7 +434,7 @@ def format_event_message(event: dict, participants: list) -> str:
     if participants:
         msg += "\n"
         for i, p in enumerate(participants, 1):
-            status = "💰" if p["paid"] else "⬜"
+            status = "💰" if p["paid"] else "❌💰"
             name = p["display_name"] or p["username"] or "Unknown"
             msg += f"{i}. {name} {status}\n"
     
