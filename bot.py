@@ -30,6 +30,7 @@ ADD_FRIEND_NAME, REMOVE_FRIEND_NAME = range(8, 10)
 EVENT_LOC_SELECT = 10
 EVENT_BOOKER = 11
 EVENT_BOOKER_NUMBER = 12
+EVENT_COST = 13
 
 DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -258,6 +259,21 @@ async def event_booker_number(update: Update, context: ContextTypes.DEFAULT_TYPE
     booker_number = update.message.text.strip()
     context.user_data["booker_number"] = booker_number
     
+    await update.message.reply_text(
+        "What's the total cost for the court booking? (e.g., 30)"
+    )
+    return EVENT_COST
+
+
+async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cost_text = update.message.text.strip().replace("$", "")
+    
+    try:
+        total_cost = float(cost_text)
+    except ValueError:
+        await update.message.reply_text("Please enter a valid number (e.g., 30)")
+        return EVENT_COST
+    
     # Generate event name automatically
     date_obj = datetime.strptime(context.user_data["event_date"], "%Y-%m-%d")
     event_name = f"Soccer - {date_obj.strftime('%a %d %b')}"
@@ -271,7 +287,8 @@ async def event_booker_number(update: Update, context: ContextTypes.DEFAULT_TYPE
         created_by=update.effective_user.id,
         chat_id=update.effective_chat.id,
         booker_name=context.user_data["booker_name"],
-        booker_number=booker_number
+        booker_number=context.user_data["booker_number"],
+        total_cost=total_cost
     )
     
     display_date = date_obj.strftime("%A, %d %B %Y")
@@ -282,7 +299,8 @@ async def event_booker_number(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"📅 {display_date}\n"
         f"🕐 {context.user_data['event_time'].replace('-', ' - ')}\n"
         f"📍 {context.user_data.get('event_location', 'TBD')}\n"
-        f"🧾 Booker: {context.user_data['booker_name']} ({booker_number})\n"
+        f"🧾 Booker: {context.user_data['booker_name']} ({context.user_data['booker_number']})\n"
+        f"💰 Total cost: ${total_cost:.2f}\n"
         f"👥 0/{context.user_data['max_players']} players",
         reply_markup=get_event_keyboard(event_id)
     )
@@ -402,6 +420,14 @@ def format_event_message(event: dict, participants: list) -> str:
         if event.get("booker_number"):
             booker_info += f" ({event['booker_number']})"
         msg += f"🧾 Booker: {booker_info}\n"
+    
+    # Show cost info
+    total_cost = event.get("total_cost", 0)
+    if total_cost > 0 and len(participants) > 0:
+        per_person = total_cost / len(participants)
+        msg += f"💰 ${total_cost:.2f} ÷ {len(participants)} = ${per_person:.2f}/person\n"
+    elif total_cost > 0:
+        msg += f"💰 Total: ${total_cost:.2f}\n"
     
     msg += f"👥 {len(participants)}/{event['max_players']} players\n"
     
@@ -1047,6 +1073,14 @@ async def check_payment_reminders(app: Application):
             if unpaid and event.get("chat_id"):
                 unpaid_names = "\n".join([f"• {p['display_name'] or p['username'] or 'Unknown'}" for p in unpaid])
                 
+                # Calculate per-person cost
+                total_cost = event.get("total_cost", 0)
+                num_participants = len(participants)
+                cost_text = ""
+                if total_cost > 0 and num_participants > 0:
+                    per_person = total_cost / num_participants
+                    cost_text = f"\n\n💵 *${total_cost:.2f} ÷ {num_participants} = ${per_person:.2f} per person*"
+                
                 booker_text = ""
                 if event.get("booker_name"):
                     booker_info = event['booker_name']
@@ -1056,7 +1090,8 @@ async def check_payment_reminders(app: Application):
                 
                 message = (
                     f"💰 *Payment Reminder*\n\n"
-                    f"⚽ {event['name']}\n\n"
+                    f"⚽ {event['name']}"
+                    f"{cost_text}\n\n"
                     f"Still unpaid:\n{unpaid_names}"
                     f"{booker_text}"
                 )
@@ -1121,6 +1156,7 @@ def main():
             EVENT_MAX: [CallbackQueryHandler(event_max_callback, pattern=r"^(max_|cancel_)")],
             EVENT_BOOKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, event_booker)],
             EVENT_BOOKER_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, event_booker_number)],
+            EVENT_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, event_cost)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
