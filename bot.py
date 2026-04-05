@@ -1843,6 +1843,15 @@ async def test_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Test command to manually trigger a ballot reminder."""
     chat_id = update.effective_chat.id
     
+    # Debug: show all settings
+    settings = db.get_chat_settings(chat_id)
+    await update.message.reply_text(
+        f"🔍 Debug info:\n"
+        f"Chat ID: {chat_id}\n"
+        f"Settings: {settings}\n"
+        f"Reminder Topic ID: {settings.get('reminder_topic_id')}"
+    )
+    
     # Calculate date 2 weeks from now
     booking_date = datetime.now() + timedelta(days=14)
     booking_date_str = booking_date.strftime("%A, %d %B")
@@ -1854,7 +1863,6 @@ async def test_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Get reminder topic if configured
-    settings = db.get_chat_settings(chat_id)
     reminder_topic_id = settings.get("reminder_topic_id")
     
     try:
@@ -1864,7 +1872,7 @@ async def test_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="MarkdownV2",
             message_thread_id=reminder_topic_id
         )
-        await update.message.reply_text(f"✅ Test reminder sent! Topic ID: {reminder_topic_id}")
+        await update.message.reply_text(f"✅ Test reminder sent to topic ID: {reminder_topic_id}")
     except Exception as e:
         await update.message.reply_text(f"❌ Failed to send: {e}")
 
