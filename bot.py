@@ -31,6 +31,7 @@ EVENT_LOC_SELECT = 10
 EVENT_BOOKER = 11
 EVENT_BOOKER_NUMBER = 12
 EVENT_COST = 13
+EDIT_COST = 14
 
 DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -81,7 +82,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 from datetime import timedelta
 
-def get_date_keyboard():
+def get_date_keyboard(prefix="date_", cancel_data="cancel_event"):
     """Generate buttons for the next 14 days."""
     today = datetime.now()
     buttons = []
@@ -91,17 +92,17 @@ def get_date_keyboard():
         day_name = date.strftime("%a")
         date_str = date.strftime("%Y-%m-%d")
         display = date.strftime("%d %b") + f" ({day_name})"
-        row.append(InlineKeyboardButton(display, callback_data=f"date_{date_str}"))
+        row.append(InlineKeyboardButton(display, callback_data=f"{prefix}{date_str}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
-    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_event")])
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=cancel_data)])
     return InlineKeyboardMarkup(buttons)
 
 
-def get_time_keyboard():
+def get_time_keyboard(prefix="time_", cancel_data="cancel_event"):
     """Generate buttons for time slots."""
     times = [
         ("7-9 AM", "07:00-09:00"),
@@ -114,12 +115,12 @@ def get_time_keyboard():
     ]
     buttons = []
     for display, value in times:
-        buttons.append([InlineKeyboardButton(display, callback_data=f"time_{value}")])
-    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_event")])
+        buttons.append([InlineKeyboardButton(display, callback_data=f"{prefix}{value}")])
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=cancel_data)])
     return InlineKeyboardMarkup(buttons)
 
 
-def get_location_keyboard():
+def get_location_keyboard(prefix="loc_", cancel_data="cancel_event"):
     """Generate buttons for locations."""
     locations = [
         ("ActiveSG Sport Park @ Teck Ghee", "teckghee"),
@@ -128,8 +129,8 @@ def get_location_keyboard():
     ]
     buttons = []
     for display, value in locations:
-        buttons.append([InlineKeyboardButton(display, callback_data=f"loc_{value}")])
-    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_event")])
+        buttons.append([InlineKeyboardButton(display, callback_data=f"{prefix}{value}")])
+    buttons.append([InlineKeyboardButton("❌ Cancel", callback_data=cancel_data)])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -389,7 +390,8 @@ def get_event_keyboard(event_id: int):
         [InlineKeyboardButton("➕ Add", callback_data=f"add_{event_id}"),
          InlineKeyboardButton("➖ Remove", callback_data=f"remove_{event_id}")],
         [InlineKeyboardButton("💰 I Paid", callback_data=f"paid_{event_id}"),
-         InlineKeyboardButton("📋 Refresh", callback_data=f"view_{event_id}")]
+         InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{event_id}")],
+        [InlineKeyboardButton("📋 Refresh", callback_data=f"view_{event_id}")]
     ])
 
 
@@ -707,6 +709,201 @@ async def view_button_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         format_event_message(event, participants),
         reply_markup=get_event_keyboard(event_id)
     )
+
+
+# ============ EDIT EVENT HANDLERS ============
+
+def get_edit_menu_keyboard(event_id: int):
+    """Generate edit menu keyboard."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📅 Date", callback_data=f"editdate_{event_id}"),
+         InlineKeyboardButton("🕐 Time", callback_data=f"edittime_{event_id}")],
+        [InlineKeyboardButton("📍 Location", callback_data=f"editloc_{event_id}"),
+         InlineKeyboardButton("💰 Cost", callback_data=f"editcost_{event_id}")],
+        [InlineKeyboardButton("⬅️ Back", callback_data=f"view_{event_id}")]
+    ])
+
+
+async def edit_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show edit menu."""
+    query = update.callback_query
+    event_id = int(query.data.replace("edit_", ""))
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    await query.answer()
+    await query.edit_message_text(
+        f"✏️ *Edit Event*\n\n"
+        f"⚽ {event['name']}\n"
+        f"📅 Date: {event['date']}\n"
+        f"🕐 Time: {event['time']}\n"
+        f"📍 Location: {event.get('location', 'TBD')}\n"
+        f"💰 Cost: ${event.get('total_cost', 0):.2f}\n\n"
+        f"What would you like to edit?",
+        parse_mode="Markdown",
+        reply_markup=get_edit_menu_keyboard(event_id)
+    )
+
+
+async def edit_date_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show date selection for editing."""
+    query = update.callback_query
+    event_id = int(query.data.replace("editdate_", ""))
+    
+    context.user_data["editing_event_id"] = event_id
+    
+    await query.answer()
+    await query.edit_message_text(
+        "Select new date:",
+        reply_markup=get_date_keyboard(prefix="newedate_", cancel_data=f"view_{event_id}")
+    )
+
+
+async def new_date_selected_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle new date selection."""
+    query = update.callback_query
+    new_date = query.data.replace("newedate_", "")
+    event_id = context.user_data.get("editing_event_id")
+    
+    if not event_id:
+        await query.answer("Error: No event selected", show_alert=True)
+        return
+    
+    # Update event name to reflect new date
+    date_obj = datetime.strptime(new_date, "%Y-%m-%d")
+    new_name = f"Soccer - {date_obj.strftime('%a %d %b')}"
+    
+    db.update_event(event_id, date=new_date, name=new_name)
+    trigger_backup()
+    
+    event = db.get_event(event_id)
+    participants = db.get_participants(event_id)
+    
+    await query.answer("Date updated!")
+    await query.edit_message_text(
+        format_event_message(event, participants),
+        reply_markup=get_event_keyboard(event_id)
+    )
+
+
+async def edit_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show time selection for editing."""
+    query = update.callback_query
+    event_id = int(query.data.replace("edittime_", ""))
+    
+    context.user_data["editing_event_id"] = event_id
+    
+    await query.answer()
+    await query.edit_message_text(
+        "Select new time:",
+        reply_markup=get_time_keyboard(prefix="newetime_", cancel_data=f"view_{event_id}")
+    )
+
+
+async def new_time_selected_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle new time selection."""
+    query = update.callback_query
+    new_time = query.data.replace("newetime_", "")
+    event_id = context.user_data.get("editing_event_id")
+    
+    if not event_id:
+        await query.answer("Error: No event selected", show_alert=True)
+        return
+    
+    db.update_event(event_id, time=new_time)
+    trigger_backup()
+    
+    event = db.get_event(event_id)
+    participants = db.get_participants(event_id)
+    
+    await query.answer("Time updated!")
+    await query.edit_message_text(
+        format_event_message(event, participants),
+        reply_markup=get_event_keyboard(event_id)
+    )
+
+
+async def edit_location_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show location selection for editing."""
+    query = update.callback_query
+    event_id = int(query.data.replace("editloc_", ""))
+    
+    context.user_data["editing_event_id"] = event_id
+    
+    await query.answer()
+    await query.edit_message_text(
+        "Select new location:",
+        reply_markup=get_location_keyboard(prefix="neweloc_", cancel_data=f"view_{event_id}")
+    )
+
+
+async def new_location_selected_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle new location selection."""
+    query = update.callback_query
+    loc_key = query.data.replace("neweloc_", "")
+    event_id = context.user_data.get("editing_event_id")
+    
+    if not event_id:
+        await query.answer("Error: No event selected", show_alert=True)
+        return
+    
+    new_location = LOCATIONS.get(loc_key, loc_key)
+    db.update_event(event_id, location=new_location)
+    trigger_backup()
+    
+    event = db.get_event(event_id)
+    participants = db.get_participants(event_id)
+    
+    await query.answer("Location updated!")
+    await query.edit_message_text(
+        format_event_message(event, participants),
+        reply_markup=get_event_keyboard(event_id)
+    )
+
+
+async def edit_cost_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Prompt for new cost."""
+    query = update.callback_query
+    event_id = int(query.data.replace("editcost_", ""))
+    
+    context.user_data["editing_event_id"] = event_id
+    
+    await query.answer()
+    await query.edit_message_text(
+        "Enter new total cost (e.g., 30):"
+    )
+    return EDIT_COST
+
+
+async def edit_cost_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle new cost input."""
+    cost_text = update.message.text.strip().replace("$", "")
+    event_id = context.user_data.get("editing_event_id")
+    
+    if not event_id:
+        await update.message.reply_text("Error: No event selected")
+        return ConversationHandler.END
+    
+    try:
+        new_cost = float(cost_text)
+    except ValueError:
+        await update.message.reply_text("Please enter a valid number (e.g., 30)")
+        return EDIT_COST
+    
+    db.update_event(event_id, total_cost=new_cost)
+    trigger_backup()
+    
+    event = db.get_event(event_id)
+    participants = db.get_participants(event_id)
+    
+    await update.message.reply_text(
+        f"✅ Cost updated!\n\n" + format_event_message(event, participants),
+        reply_markup=get_event_keyboard(event_id)
+    )
+    return ConversationHandler.END
 
 
 async def old_remove_friend_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1192,6 +1389,26 @@ def main():
     app.add_handler(CallbackQueryHandler(view_button_callback, pattern=r"^view_\d+$"))
     app.add_handler(CallbackQueryHandler(remove_button_callback, pattern=r"^remove_\d+$"))
     app.add_handler(CallbackQueryHandler(remove_person_callback, pattern=r"^rm_\d+_-?\d+$"))
+    
+    # Edit event handlers
+    app.add_handler(CallbackQueryHandler(edit_button_callback, pattern=r"^edit_\d+$"))
+    app.add_handler(CallbackQueryHandler(edit_date_callback, pattern=r"^editdate_\d+$"))
+    app.add_handler(CallbackQueryHandler(new_date_selected_callback, pattern=r"^newedate_"))
+    app.add_handler(CallbackQueryHandler(edit_time_callback, pattern=r"^edittime_\d+$"))
+    app.add_handler(CallbackQueryHandler(new_time_selected_callback, pattern=r"^newetime_"))
+    app.add_handler(CallbackQueryHandler(edit_location_callback, pattern=r"^editloc_\d+$"))
+    app.add_handler(CallbackQueryHandler(new_location_selected_callback, pattern=r"^neweloc_"))
+    
+    # Edit cost conversation
+    edit_cost_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(edit_cost_callback, pattern=r"^editcost_\d+$")],
+        states={
+            EDIT_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_cost_input)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+    )
+    app.add_handler(edit_cost_conv)
 
     # Add person conversation
     add_conv = ConversationHandler(

@@ -135,6 +135,21 @@ def get_upcoming_events() -> list:
     ]
 
 
+def update_event(event_id: int, **kwargs):
+    """Update event fields. Pass field names as keyword arguments."""
+    if not kwargs:
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    set_clause = ", ".join([f"{k} = ?" for k in kwargs.keys()])
+    values = list(kwargs.values()) + [event_id]
+    
+    cursor.execute(f"UPDATE events SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+    conn.close()
+
+
 def cleanup_old_events(days_old: int = 3) -> int:
     """Delete events older than X days. Returns number deleted."""
     conn = get_connection()
