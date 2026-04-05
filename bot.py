@@ -61,24 +61,15 @@ def get_display_name(user) -> str:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "⚽ Soccer Group Bot\n\n"
-        "📅 EVENT COMMANDS\n"
-        "/newevent - Create a new event\n"
-        "/events - List upcoming events\n"
-        "/event [id] - View event details\n\n"
-        "💰 PAYMENT\n"
-        "/paid [id] - Mark yourself as paid\n"
-        "/setpaid [id] @user - Mark someone as paid\n"
-        "/payments [id] - View payment status\n\n"
-        "⏰ REMINDERS\n"
-        "/newreminder - Set up a weekly reminder\n"
-        "/reminders - List active reminders\n"
-        "/deletereminder [id] - Delete a reminder\n\n"
-        "⚙️ SETUP\n"
-        "/setuptopics - Configure which topics to use\n"
-        "/servertime - Check server time\n\n"
-        "Payment reminders are sent automatically 1 hour after match ends.\n\n"
-        "/help - Show this message"
+        "⚽ *Soccer Group Bot*\n\n"
+        "*Main Commands:*\n"
+        "/newevent - Create a new match\n"
+        "/events - View upcoming matches\n\n"
+        "*Admin Commands:*\n"
+        "/setuptopics - Configure topic channels\n"
+        "/newreminder - Set ballot reminder\n\n"
+        "Use the buttons on each event to add players, generate teams, and more!",
+        parse_mode="Markdown"
     )
 
 
@@ -361,10 +352,9 @@ async def new_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # User hasn't started private chat with bot
                 await message.reply_text(
                     "⚠️ I can't message you privately.\n\n"
-                    "Please start a chat with me first by clicking @YourBotUsername and pressing START, "
-                    "then try /newevent again.",
+                    "Please click the button below to start a chat with me first, then try /newevent again.",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("💬 Start Private Chat", url=f"https://t.me/{(await context.bot.get_me()).username}")]
+                        [InlineKeyboardButton("💬 Start Chat with Bot", url=f"https://t.me/{(await context.bot.get_me()).username}?start=1")]
                     ])
                 )
                 return ConversationHandler.END
@@ -666,11 +656,12 @@ async def view_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def get_event_keyboard(event_id: int):
     """Generate inline keyboard for an event (no payment button)."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add", callback_data=f"add_{event_id}"),
-         InlineKeyboardButton("➖ Remove", callback_data=f"remove_{event_id}")],
-        [InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{event_id}"),
-         InlineKeyboardButton("🎲 Generate Teams", callback_data=f"teams_{event_id}")],
-        [InlineKeyboardButton("📋 Refresh", callback_data=f"view_{event_id}")]
+        [InlineKeyboardButton("🙋 Join", callback_data=f"addme_{event_id}"),
+         InlineKeyboardButton("➕ Add Others", callback_data=f"add_{event_id}")],
+        [InlineKeyboardButton("➖ Remove", callback_data=f"remove_{event_id}"),
+         InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{event_id}")],
+        [InlineKeyboardButton("🎲 Teams", callback_data=f"teams_{event_id}"),
+         InlineKeyboardButton("📋 Refresh", callback_data=f"view_{event_id}")]
     ])
 
 
@@ -767,6 +758,46 @@ def format_event_message(event: dict, participants: list) -> str:
             msg += f"{i}. {name} {status}\n"
     
     return msg
+
+
+async def add_me_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add the user themselves to the event using their display name."""
+    query = update.callback_query
+    event_id = int(query.data.replace("addme_", ""))
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    participants = db.get_participants(event_id)
+    if len(participants) >= event["max_players"]:
+        await query.answer("Event is full!", show_alert=True)
+        return
+    
+    user = update.effective_user
+    # Use display name (first name + last name) instead of username
+    display_name = get_display_name(user)
+    
+    # Check if already joined
+    for p in participants:
+        if p["user_id"] == user.id:
+            await query.answer("You're already in this event!", show_alert=True)
+            return
+    
+    # Add the user
+    success = db.add_guest(event_id, display_name, user.id)
+    
+    if success:
+        participants = db.get_participants(event_id)
+        await query.answer(f"Added {display_name}!")
+        await query.edit_message_text(
+            format_event_message(event, participants),
+            reply_markup=get_event_keyboard(event_id)
+        )
+        trigger_backup()
+    else:
+        await query.answer("Failed to add. Try again.", show_alert=True)
 
 
 async def add_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2095,6 +2126,7 @@ def main():
     app.add_handler(CommandHandler("event", view_event))
 
     # Inline button handlers for events
+    app.add_handler(CallbackQueryHandler(add_me_callback, pattern=r"^addme_\d+$"))
     app.add_handler(CallbackQueryHandler(paid_button_callback, pattern=r"^paid_\d+$"))
     app.add_handler(CallbackQueryHandler(toggle_paid_callback, pattern=r"^togglepaid_\d+_-?\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_paid_callback, pattern=r"^confirmpaid_\d+$"))
