@@ -546,13 +546,21 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if target_chat_id:
         # Post to group and confirm in DM
-        await context.bot.send_message(
-            chat_id=target_chat_id,
-            text=event_message,
-            reply_markup=get_event_keyboard(event_id),
-            message_thread_id=target_topic_id
-        )
-        await message.reply_text("✅ Event posted to the group!")
+        try:
+            await context.bot.send_message(
+                chat_id=target_chat_id,
+                text=event_message,
+                reply_markup=get_event_keyboard(event_id),
+                message_thread_id=message_thread_id
+            )
+            await message.reply_text("✅ Event posted to the group!")
+        except Exception as e:
+            logger.error(f"Failed to post event to group: {e}")
+            await message.reply_text(
+                f"⚠️ Event created (ID: {event_id}) but failed to post to group.\n"
+                f"Error: {e}\n\n"
+                f"You can view it with /event {event_id}"
+            )
     else:
         # Reply directly
         await message.reply_text(
