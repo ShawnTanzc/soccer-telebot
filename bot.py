@@ -71,9 +71,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/reminders - List active reminders\n"
         "/deletereminder [id] - Delete a reminder\n\n"
         "⚙️ SETUP\n"
-        "/setuptopics - Configure which topics to use\n\n"
+        "/setuptopics - Configure which topics to use\n"
+        "/servertime - Check server time\n\n"
         "Payment reminders are sent automatically 1 hour after match ends.\n\n"
         "/help - Show this message"
+    )
+
+
+async def server_time_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current server time."""
+    now = datetime.now()
+    await update.message.reply_text(
+        f"🕐 *Server Time*\n\n"
+        f"Date: {now.strftime('%A, %d %B %Y')}\n"
+        f"Time: {now.strftime('%H:%M:%S')}\n"
+        f"Timezone: UTC (Railway default)\n\n"
+        f"_Singapore is UTC+8, so add 8 hours to this time._",
+        parse_mode="Markdown"
     )
 
 
@@ -2071,6 +2085,7 @@ def main():
     # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("servertime", server_time_cmd))
 
     app.add_handler(event_conv)
     app.add_handler(CommandHandler("events", list_events))
