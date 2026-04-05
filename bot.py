@@ -1839,30 +1839,68 @@ async def delete_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"🗑️ Reminder {reminder_id} deleted.")
 
 
-# ============ SCHEDULER ============
-
-def schedule_reminder(scheduler: AsyncIOScheduler, app: Application, reminder: dict):
-    async def send_reminder():
-        # Calculate date 2 weeks from now
-        booking_date = datetime.now() + timedelta(days=14)
-        booking_date_str = booking_date.strftime("%A, %d %B")
-        
-        message = (
-            f"⏰ *Time to book the court\\!*\n\n"
-            f"🗓️ Ballot today for: *{booking_date_str}*\n\n"
-            f"[Book at ActiveSG](https://activesg.gov.sg/facility-bookings/activities/CF6ecxA4HkJgUabDMGsWo/venues)"
-        )
-        
-        # Get reminder topic if configured
-        settings = db.get_chat_settings(reminder["chat_id"])
-        reminder_topic_id = settings.get("reminder_topic_id")
-        
-        await app.bot.send_message(
-            chat_id=reminder["chat_id"],
+async def test_reminder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test command to manually trigger a ballot reminder."""
+    chat_id = update.effective_chat.id
+    
+    # Calculate date 2 weeks from now
+    booking_date = datetime.now() + timedelta(days=14)
+    booking_date_str = booking_date.strftime("%A, %d %B")
+    
+    message = (
+        f"⏰ *Time to book the court\\!*\n\n"
+        f"🗓️ Ballot today for: *{booking_date_str}*\n\n"
+        f"[Book at ActiveSG](https://activesg.gov.sg/facility-bookings/activities/CF6ecxA4HkJgUabDMGsWo/venues)"
+    )
+    
+    # Get reminder topic if configured
+    settings = db.get_chat_settings(chat_id)
+    reminder_topic_id = settings.get("reminder_topic_id")
+    
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
             text=message,
             parse_mode="MarkdownV2",
             message_thread_id=reminder_topic_id
         )
+        await update.message.reply_text(f"✅ Test reminder sent! Topic ID: {reminder_topic_id}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to send: {e}")
+
+
+# ============ SCHEDULER ============
+
+def schedule_reminder(scheduler: AsyncIOScheduler, app: Application, reminder: dict):
+    async def send_reminder():
+        try:
+            logger.info(f"Sending ballot reminder for chat {reminder['chat_id']}")
+            
+            # Calculate date 2 weeks from now
+            booking_date = datetime.now() + timedelta(days=14)
+            booking_date_str = booking_date.strftime("%A, %d %B")
+            
+            message = (
+                f"⏰ *Time to book the court\\!*\n\n"
+                f"🗓️ Ballot today for: *{booking_date_str}*\n\n"
+                f"[Book at ActiveSG](https://activesg.gov.sg/facility-bookings/activities/CF6ecxA4HkJgUabDMGsWo/venues)"
+            )
+            
+            # Get reminder topic if configured
+            settings = db.get_chat_settings(reminder["chat_id"])
+            reminder_topic_id = settings.get("reminder_topic_id")
+            
+            logger.info(f"Sending to chat {reminder['chat_id']}, topic {reminder_topic_id}")
+            
+            await app.bot.send_message(
+                chat_id=reminder["chat_id"],
+                text=message,
+                parse_mode="MarkdownV2",
+                message_thread_id=reminder_topic_id
+            )
+            logger.info(f"Ballot reminder sent successfully")
+        except Exception as e:
+            logger.error(f"Failed to send ballot reminder: {e}")
 
     scheduler.add_job(
         send_reminder,
@@ -1870,6 +1908,7 @@ def schedule_reminder(scheduler: AsyncIOScheduler, app: Application, reminder: d
         id=f"reminder_{reminder['id']}",
         replace_existing=True
     )
+    logger.info(f"Scheduled reminder {reminder['id']} for day {reminder['day_of_week']} at {reminder['hour']}:{reminder['minute']}")
 
 
 def get_event_end_time(event: dict) -> datetime:
@@ -2085,6 +2124,7 @@ def main():
     app.add_handler(reminder_conv)
     app.add_handler(CommandHandler("reminders", list_reminders))
     app.add_handler(CommandHandler("deletereminder", delete_reminder_cmd))
+    app.add_handler(CommandHandler("testreminder", test_reminder_cmd))
     
     # Topic setup handlers
     app.add_handler(CommandHandler("setuptopics", setup_topics))
