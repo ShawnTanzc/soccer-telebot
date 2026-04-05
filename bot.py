@@ -88,6 +88,59 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
 
+# ============ ADMIN COMMANDS ============
+
+async def clear_all_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show confirmation prompt to clear all data."""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚠️ Yes, DELETE ALL DATA", callback_data="confirm_clearall")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_clearall")]
+    ])
+    
+    await update.message.reply_text(
+        "🚨 *WARNING: Clear All Data*\n\n"
+        "This will permanently delete:\n"
+        "• All events\n"
+        "• All participants & payment records\n"
+        "• All scheduled reminders\n"
+        "• All topic settings\n\n"
+        "*This action cannot be undone!*\n\n"
+        "Are you sure?",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+async def confirm_clearall_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle confirmation of clear all data."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Clear all data
+    counts = db.clear_all_data()
+    
+    # Trigger backup to sync the empty state
+    trigger_backup()
+    
+    await query.edit_message_text(
+        "✅ *All data cleared!*\n\n"
+        f"Deleted:\n"
+        f"• {counts['events']} events\n"
+        f"• {counts['participants']} participants\n"
+        f"• {counts['reminders']} reminders\n"
+        f"• {counts['chat_settings']} topic settings\n\n"
+        "The bot is now reset to a fresh state.",
+        parse_mode="Markdown"
+    )
+
+
+async def cancel_clearall_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle cancellation of clear all data."""
+    query = update.callback_query
+    await query.answer("Cancelled")
+    await query.edit_message_text("❌ Clear all cancelled. No data was deleted.")
+
+
 # ============ TOPIC SETUP ============
 
 async def setup_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2120,6 +2173,9 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("servertime", server_time_cmd))
+    app.add_handler(CommandHandler("clearall", clear_all_cmd))
+    app.add_handler(CallbackQueryHandler(confirm_clearall_callback, pattern=r"^confirm_clearall$"))
+    app.add_handler(CallbackQueryHandler(cancel_clearall_callback, pattern=r"^cancel_clearall$"))
 
     app.add_handler(event_conv)
     app.add_handler(CommandHandler("events", list_events))

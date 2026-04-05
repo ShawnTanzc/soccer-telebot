@@ -410,6 +410,38 @@ def delete_reminder(reminder_id: int):
     conn.close()
 
 
+def clear_all_data() -> dict:
+    """Clear all data from all tables. Returns counts of deleted records."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Get counts before clearing
+    cursor.execute("SELECT COUNT(*) FROM events")
+    events_count = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM participants")
+    participants_count = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM reminders")
+    reminders_count = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM chat_settings")
+    settings_count = cursor.fetchone()[0]
+    
+    # Clear all tables
+    cursor.execute("DELETE FROM participants")
+    cursor.execute("DELETE FROM events")
+    cursor.execute("DELETE FROM reminders")
+    cursor.execute("DELETE FROM chat_settings")
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "events": events_count,
+        "participants": participants_count,
+        "reminders": reminders_count,
+        "chat_settings": settings_count
+    }
+
+
 # ============ BACKUP/RESTORE TO GITHUB GIST ============
 
 def export_to_json() -> dict:
