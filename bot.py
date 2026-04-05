@@ -248,41 +248,44 @@ async def event_max_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def event_booker(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    message = update.message or update.channel_post
+    if not message or not message.text:
         return EVENT_BOOKER
     
-    booker_name = update.message.text.strip()
+    booker_name = message.text.strip()
     context.user_data["booker_name"] = booker_name
     
-    await update.message.reply_text(
+    await message.reply_text(
         f"Booker: {booker_name}\n\nWhat's the booker's phone number? (for PayNow)"
     )
     return EVENT_BOOKER_NUMBER
 
 
 async def event_booker_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    message = update.message or update.channel_post
+    if not message or not message.text:
         return EVENT_BOOKER_NUMBER
     
-    booker_number = update.message.text.strip()
+    booker_number = message.text.strip()
     context.user_data["booker_number"] = booker_number
     
-    await update.message.reply_text(
+    await message.reply_text(
         "What's the total cost for the court booking? (e.g., 30)"
     )
     return EVENT_COST
 
 
 async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    message = update.message or update.channel_post
+    if not message or not message.text:
         return EVENT_COST
     
-    cost_text = update.message.text.strip().replace("$", "")
+    cost_text = message.text.strip().replace("$", "")
     
     try:
         total_cost = float(cost_text)
     except ValueError:
-        await update.message.reply_text("Please enter a valid number (e.g., 30)")
+        await message.reply_text("Please enter a valid number (e.g., 30)")
         return EVENT_COST
     
     # Generate event name automatically
@@ -290,7 +293,9 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     event_name = f"Soccer - {date_obj.strftime('%a %d %b')}"
     
     # Get message_thread_id for forum topics support
-    message_thread_id = update.message.message_thread_id if update.message.is_topic_message else None
+    message_thread_id = None
+    if hasattr(message, 'is_topic_message') and message.is_topic_message:
+        message_thread_id = message.message_thread_id
     
     event_id = db.create_event(
         name=event_name,
@@ -298,7 +303,7 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
         time=context.user_data["event_time"],
         location=context.user_data.get("event_location", ""),
         max_players=context.user_data["max_players"],
-        created_by=update.effective_user.id,
+        created_by=update.effective_user.id if update.effective_user else 0,
         chat_id=update.effective_chat.id,
         booker_name=context.user_data["booker_name"],
         booker_number=context.user_data["booker_number"],
@@ -308,7 +313,7 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     display_date = date_obj.strftime("%A, %d %B %Y")
     
-    await update.message.reply_text(
+    await message.reply_text(
         f"✅ Event created!\n\n"
         f"⚽ {event_name}\n"
         f"📅 {display_date}\n"
@@ -1612,6 +1617,9 @@ def main():
 
     app = Application.builder().token(TOKEN).post_init(post_init).build()
 
+    # Filter for text messages (both regular and channel posts)
+    text_filter = (filters.TEXT & ~filters.COMMAND) | (filters.UpdateType.CHANNEL_POST & filters.TEXT)
+    
     # Event creation conversation (button-based)
     event_conv = ConversationHandler(
         entry_points=[CommandHandler("newevent", new_event_start)],
@@ -1620,9 +1628,9 @@ def main():
             EVENT_TIME: [CallbackQueryHandler(event_time_callback, pattern=r"^(time_|cancel_)")],
             EVENT_LOC_SELECT: [CallbackQueryHandler(event_location_callback, pattern=r"^(loc_|cancel_)")],
             EVENT_MAX: [CallbackQueryHandler(event_max_callback, pattern=r"^(max_|cancel_)")],
-            EVENT_BOOKER: [MessageHandler(filters.TEXT & ~filters.COMMAND, event_booker)],
-            EVENT_BOOKER_NUMBER: [MessageHandler(filters.TEXT & ~filters.COMMAND, event_booker_number)],
-            EVENT_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, event_cost)],
+            EVENT_BOOKER: [MessageHandler(text_filter, event_booker)],
+            EVENT_BOOKER_NUMBER: [MessageHandler(text_filter, event_booker_number)],
+            EVENT_COST: [MessageHandler(text_filter, event_cost)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
