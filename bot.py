@@ -70,6 +70,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/newreminder - Set up a weekly reminder\n"
         "/reminders - List active reminders\n"
         "/deletereminder [id] - Delete a reminder\n\n"
+        "⚙️ SETUP\n"
+        "/setuptopics - Configure which topics to use\n\n"
         "Payment reminders are sent automatically 1 hour after match ends.\n\n"
         "/help - Show this message"
     )
@@ -77,6 +79,142 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
+
+
+# ============ TOPIC SETUP ============
+
+async def setup_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show topic setup menu."""
+    message = update.message or update.channel_post
+    if not message:
+        return
+    
+    chat_id = update.effective_chat.id
+    settings = db.get_chat_settings(chat_id)
+    
+    def topic_status(topic_id):
+        return f"✅ Set (ID: {topic_id})" if topic_id else "❌ Not set"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"📅 Events: {topic_status(settings.get('events_topic_id'))}", callback_data="setuptopic_events")],
+        [InlineKeyboardButton(f"👕 Teams: {topic_status(settings.get('teams_topic_id'))}", callback_data="setuptopic_teams")],
+        [InlineKeyboardButton(f"💰 Payment: {topic_status(settings.get('payment_topic_id'))}", callback_data="setuptopic_payment")],
+        [InlineKeyboardButton(f"⏰ Reminders: {topic_status(settings.get('reminder_topic_id'))}", callback_data="setuptopic_reminder")],
+    ])
+    
+    await message.reply_text(
+        "⚙️ *Topic Setup*\n\n"
+        "Configure which topics to use for each feature.\n"
+        "Go to the desired topic and click the button below, then click 'Use This Topic'.\n\n"
+        "Current settings:",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+async def setup_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle topic setup selection."""
+    query = update.callback_query
+    topic_type = query.data.replace("setuptopic_", "")
+    
+    context.user_data["setup_topic_type"] = topic_type
+    
+    topic_names = {
+        "events": "📅 Upcoming Events",
+        "teams": "👕 Team Sheet", 
+        "payment": "💰 Payment",
+        "reminder": "⏰ Ballot Reminder"
+    }
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📍 Use This Topic", callback_data="confirmtopic")],
+        [InlineKeyboardButton("⬅️ Back", callback_data="setuptopics_back")]
+    ])
+    
+    await query.answer()
+    await query.edit_message_text(
+        f"Setting up: *{topic_names.get(topic_type, topic_type)}*\n\n"
+        f"Navigate to the topic where you want this feature, then click 'Use This Topic'.",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+async def confirm_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confirm and save the topic setting."""
+    query = update.callback_query
+    topic_type = context.user_data.get("setup_topic_type")
+    
+    if not topic_type:
+        await query.answer("Session expired. Please start again.", show_alert=True)
+        return
+    
+    chat_id = update.effective_chat.id
+    message_thread_id = query.message.message_thread_id if query.message.is_topic_message else None
+    
+    db.set_chat_topic(chat_id, topic_type, message_thread_id)
+    trigger_backup()
+    
+    topic_names = {
+        "events": "📅 Upcoming Events",
+        "teams": "👕 Team Sheet",
+        "payment": "💰 Payment", 
+        "reminder": "⏰ Ballot Reminder"
+    }
+    
+    if message_thread_id:
+        await query.answer(f"{topic_names.get(topic_type)} will use this topic!")
+    else:
+        await query.answer(f"{topic_names.get(topic_type)} will use General/main chat!")
+    
+    # Show updated settings
+    settings = db.get_chat_settings(chat_id)
+    
+    def topic_status(topic_id):
+        return f"✅ Set (ID: {topic_id})" if topic_id else "❌ Not set"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"📅 Events: {topic_status(settings.get('events_topic_id'))}", callback_data="setuptopic_events")],
+        [InlineKeyboardButton(f"👕 Teams: {topic_status(settings.get('teams_topic_id'))}", callback_data="setuptopic_teams")],
+        [InlineKeyboardButton(f"💰 Payment: {topic_status(settings.get('payment_topic_id'))}", callback_data="setuptopic_payment")],
+        [InlineKeyboardButton(f"⏰ Reminders: {topic_status(settings.get('reminder_topic_id'))}", callback_data="setuptopic_reminder")],
+    ])
+    
+    await query.edit_message_text(
+        "⚙️ *Topic Setup*\n\n"
+        "Configure which topics to use for each feature.\n"
+        "Go to the desired topic and click the button below, then click 'Use This Topic'.\n\n"
+        "Current settings:",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+async def setup_topics_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Go back to topic setup menu."""
+    query = update.callback_query
+    chat_id = update.effective_chat.id
+    settings = db.get_chat_settings(chat_id)
+    
+    def topic_status(topic_id):
+        return f"✅ Set (ID: {topic_id})" if topic_id else "❌ Not set"
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"📅 Events: {topic_status(settings.get('events_topic_id'))}", callback_data="setuptopic_events")],
+        [InlineKeyboardButton(f"👕 Teams: {topic_status(settings.get('teams_topic_id'))}", callback_data="setuptopic_teams")],
+        [InlineKeyboardButton(f"💰 Payment: {topic_status(settings.get('payment_topic_id'))}", callback_data="setuptopic_payment")],
+        [InlineKeyboardButton(f"⏰ Reminders: {topic_status(settings.get('reminder_topic_id'))}", callback_data="setuptopic_reminder")],
+    ])
+    
+    await query.answer()
+    await query.edit_message_text(
+        "⚙️ *Topic Setup*\n\n"
+        "Configure which topics to use for each feature.\n"
+        "Go to the desired topic and click the button below, then click 'Use This Topic'.\n\n"
+        "Current settings:",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
 
 
 # ============ EVENT CREATION CONVERSATION ============
@@ -1175,7 +1313,24 @@ async def team_select_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     msg += "\n\n_Good luck everyone!_ 🏆"
     
     await query.answer("Teams selected!")
-    await query.edit_message_text(msg, parse_mode="Markdown")
+    
+    # Post to teams topic if configured
+    chat_id = update.effective_chat.id
+    settings = db.get_chat_settings(chat_id)
+    teams_topic_id = settings.get("teams_topic_id")
+    
+    if teams_topic_id:
+        # Post to dedicated teams topic
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=msg,
+            parse_mode="Markdown",
+            message_thread_id=teams_topic_id
+        )
+        await query.edit_message_text("✅ Teams posted to Team Sheet topic!")
+    else:
+        # Just edit the current message
+        await query.edit_message_text(msg, parse_mode="Markdown")
     
     # Clear session data
     context.user_data.pop("team_options", None)
@@ -1501,10 +1656,15 @@ def schedule_reminder(scheduler: AsyncIOScheduler, app: Application, reminder: d
             f"[Book at ActiveSG](https://activesg.gov.sg/facility-bookings/activities/CF6ecxA4HkJgUabDMGsWo/venues)"
         )
         
+        # Get reminder topic if configured
+        settings = db.get_chat_settings(reminder["chat_id"])
+        reminder_topic_id = settings.get("reminder_topic_id")
+        
         await app.bot.send_message(
             chat_id=reminder["chat_id"],
             text=message,
-            parse_mode="MarkdownV2"
+            parse_mode="MarkdownV2",
+            message_thread_id=reminder_topic_id
         )
 
     scheduler.add_job(
@@ -1571,11 +1731,15 @@ async def check_payment_reminders(app: Application):
                 )
                 
                 try:
+                    # Use payment topic if configured, otherwise use event's topic
+                    settings = db.get_chat_settings(event["chat_id"])
+                    payment_topic_id = settings.get("payment_topic_id") or event.get("message_thread_id")
+                    
                     await app.bot.send_message(
                         chat_id=event["chat_id"],
                         text=message,
                         parse_mode="Markdown",
-                        message_thread_id=event.get("message_thread_id")
+                        message_thread_id=payment_topic_id
                     )
                 except Exception as e:
                     logger.error(f"Failed to send payment reminder for event {event['id']}: {e}")
@@ -1720,6 +1884,12 @@ def main():
     app.add_handler(reminder_conv)
     app.add_handler(CommandHandler("reminders", list_reminders))
     app.add_handler(CommandHandler("deletereminder", delete_reminder_cmd))
+    
+    # Topic setup handlers
+    app.add_handler(CommandHandler("setuptopics", setup_topics))
+    app.add_handler(CallbackQueryHandler(setup_topic_callback, pattern=r"^setuptopic_"))
+    app.add_handler(CallbackQueryHandler(confirm_topic_callback, pattern=r"^confirmtopic$"))
+    app.add_handler(CallbackQueryHandler(setup_topics_back_callback, pattern=r"^setuptopics_back$"))
 
     logger.info("Bot started!")
     

@@ -91,7 +91,56 @@ def init_db():
             enabled INTEGER DEFAULT 1
         )
     """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_settings (
+            chat_id INTEGER PRIMARY KEY,
+            events_topic_id INTEGER,
+            teams_topic_id INTEGER,
+            payment_topic_id INTEGER,
+            reminder_topic_id INTEGER
+        )
+    """)
 
+    conn.commit()
+    conn.close()
+
+
+def get_chat_settings(chat_id: int) -> dict:
+    """Get topic settings for a chat."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT events_topic_id, teams_topic_id, payment_topic_id, reminder_topic_id FROM chat_settings WHERE chat_id = ?", (chat_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {
+            "events_topic_id": row[0],
+            "teams_topic_id": row[1],
+            "payment_topic_id": row[2],
+            "reminder_topic_id": row[3]
+        }
+    return {}
+
+
+def set_chat_topic(chat_id: int, topic_type: str, topic_id: int):
+    """Set a specific topic ID for a chat."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Insert or update
+    cursor.execute("INSERT OR IGNORE INTO chat_settings (chat_id) VALUES (?)", (chat_id,))
+    
+    column_map = {
+        "events": "events_topic_id",
+        "teams": "teams_topic_id", 
+        "payment": "payment_topic_id",
+        "reminder": "reminder_topic_id"
+    }
+    
+    if topic_type in column_map:
+        cursor.execute(f"UPDATE chat_settings SET {column_map[topic_type]} = ? WHERE chat_id = ?", (topic_id, chat_id))
+    
     conn.commit()
     conn.close()
 
@@ -400,13 +449,23 @@ def export_to_json() -> dict:
             "hour": row[3], "minute": row[4], "message": row[5], "enabled": row[6]
         })
     
+    # Export chat_settings
+    cursor.execute("SELECT * FROM chat_settings")
+    chat_settings = []
+    for row in cursor.fetchall():
+        chat_settings.append({
+            "chat_id": row[0], "events_topic_id": row[1], "teams_topic_id": row[2],
+            "payment_topic_id": row[3], "reminder_topic_id": row[4]
+        })
+    
     conn.close()
     
     return {
         "exported_at": datetime.now().isoformat(),
         "events": events,
         "participants": participants,
-        "reminders": reminders
+        "reminders": reminders,
+        "chat_settings": chat_settings
     }
 
 
@@ -441,6 +500,14 @@ def import_from_json(data: dict):
             INSERT INTO reminders (id, chat_id, day_of_week, hour, minute, message, enabled)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (r["id"], r["chat_id"], r["day_of_week"], r["hour"], r["minute"], r["message"], r.get("enabled", 1)))
+    
+    # Import chat_settings
+    cursor.execute("DELETE FROM chat_settings")
+    for s in data.get("chat_settings", []):
+        cursor.execute("""
+            INSERT INTO chat_settings (chat_id, events_topic_id, teams_topic_id, payment_topic_id, reminder_topic_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, (s["chat_id"], s.get("events_topic_id"), s.get("teams_topic_id"), s.get("payment_topic_id"), s.get("reminder_topic_id")))
     
     conn.commit()
     conn.close()
