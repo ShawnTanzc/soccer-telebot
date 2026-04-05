@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import random
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -391,6 +392,7 @@ def get_event_keyboard(event_id: int):
          InlineKeyboardButton("➖ Remove", callback_data=f"remove_{event_id}")],
         [InlineKeyboardButton("💰 I Paid", callback_data=f"paid_{event_id}"),
          InlineKeyboardButton("✏️ Edit", callback_data=f"edit_{event_id}")],
+        [InlineKeyboardButton("🎲 Generate Teams", callback_data=f"teams_{event_id}")],
         [InlineKeyboardButton("📋 Refresh", callback_data=f"view_{event_id}")]
     ])
 
@@ -906,6 +908,172 @@ async def edit_cost_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# ============ TEAM GENERATION HANDLERS ============
+
+def generate_team_options(participants: list, num_options: int = 3):
+    """Generate multiple random team configurations."""
+    names = [p["display_name"] or p["username"] or "Unknown" for p in participants]
+    num_players = len(names)
+    
+    # For 15 players: 5v5v5 (3 teams)
+    # For 18 players: 6v6v6 (3 teams)
+    # For other numbers: split as evenly as possible into 3 teams
+    team_size = num_players // 3
+    remainder = num_players % 3
+    
+    options = []
+    for _ in range(num_options):
+        shuffled = names.copy()
+        random.shuffle(shuffled)
+        
+        # Split into 3 teams
+        team1_size = team_size + (1 if remainder > 0 else 0)
+        team2_size = team_size + (1 if remainder > 1 else 0)
+        
+        team1 = shuffled[:team1_size]
+        team2 = shuffled[team1_size:team1_size + team2_size]
+        team3 = shuffled[team1_size + team2_size:]
+        
+        options.append((team1, team2, team3))
+    
+    return options
+
+
+def format_team_option(option_num: int, teams: tuple) -> str:
+    """Format a single team option for display."""
+    team1, team2, team3 = teams
+    
+    msg = f"*Option {option_num}*\n\n"
+    msg += f"🔴 *Team Red* ({len(team1)})\n"
+    msg += "\n".join([f"  • {name}" for name in team1])
+    msg += f"\n\n🔵 *Team Blue* ({len(team2)})\n"
+    msg += "\n".join([f"  • {name}" for name in team2])
+    msg += f"\n\n🟢 *Team Green* ({len(team3)})\n"
+    msg += "\n".join([f"  • {name}" for name in team3])
+    
+    return msg
+
+
+async def teams_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate 3 random team options."""
+    query = update.callback_query
+    event_id = int(query.data.replace("teams_", ""))
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    participants = db.get_participants(event_id)
+    
+    if len(participants) < 6:
+        await query.answer("Need at least 6 players to generate teams!", show_alert=True)
+        return
+    
+    # Generate 3 options
+    options = generate_team_options(participants, 3)
+    context.user_data["team_options"] = options
+    context.user_data["team_event_id"] = event_id
+    
+    # Show first option with navigation
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("◀️ Prev", callback_data="teamopt_prev"),
+         InlineKeyboardButton("1/3", callback_data="teamopt_noop"),
+         InlineKeyboardButton("Next ▶️", callback_data="teamopt_next")],
+        [InlineKeyboardButton("✅ Use This", callback_data="teamopt_select_0")],
+        [InlineKeyboardButton("🔄 Regenerate All", callback_data=f"teams_{event_id}")],
+        [InlineKeyboardButton("⬅️ Back", callback_data=f"view_{event_id}")]
+    ])
+    
+    context.user_data["team_option_index"] = 0
+    
+    await query.answer()
+    await query.edit_message_text(
+        f"🎲 *Team Generator*\n\n{format_team_option(1, options[0])}",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+async def team_option_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Navigate between team options."""
+    query = update.callback_query
+    action = query.data.replace("teamopt_", "")
+    
+    options = context.user_data.get("team_options", [])
+    current_index = context.user_data.get("team_option_index", 0)
+    event_id = context.user_data.get("team_event_id")
+    
+    if not options or not event_id:
+        await query.answer("Session expired. Please generate teams again.", show_alert=True)
+        return
+    
+    if action == "prev":
+        current_index = (current_index - 1) % 3
+    elif action == "next":
+        current_index = (current_index + 1) % 3
+    elif action == "noop":
+        await query.answer()
+        return
+    
+    context.user_data["team_option_index"] = current_index
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("◀️ Prev", callback_data="teamopt_prev"),
+         InlineKeyboardButton(f"{current_index + 1}/3", callback_data="teamopt_noop"),
+         InlineKeyboardButton("Next ▶️", callback_data="teamopt_next")],
+        [InlineKeyboardButton("✅ Use This", callback_data=f"teamopt_select_{current_index}")],
+        [InlineKeyboardButton("🔄 Regenerate All", callback_data=f"teams_{event_id}")],
+        [InlineKeyboardButton("⬅️ Back", callback_data=f"view_{event_id}")]
+    ])
+    
+    await query.answer()
+    await query.edit_message_text(
+        f"🎲 *Team Generator*\n\n{format_team_option(current_index + 1, options[current_index])}",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+async def team_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Select a team option and post to chat."""
+    query = update.callback_query
+    option_index = int(query.data.replace("teamopt_select_", ""))
+    
+    options = context.user_data.get("team_options", [])
+    event_id = context.user_data.get("team_event_id")
+    
+    if not options or not event_id:
+        await query.answer("Session expired. Please generate teams again.", show_alert=True)
+        return
+    
+    event = db.get_event(event_id)
+    if not event:
+        await query.answer("Event not found!", show_alert=True)
+        return
+    
+    selected = options[option_index]
+    team1, team2, team3 = selected
+    
+    # Format final teams message
+    msg = f"⚽ *Teams for {event['name']}*\n\n"
+    msg += f"🔴 *Team Red* ({len(team1)})\n"
+    msg += "\n".join([f"  • {name}" for name in team1])
+    msg += f"\n\n🔵 *Team Blue* ({len(team2)})\n"
+    msg += "\n".join([f"  • {name}" for name in team2])
+    msg += f"\n\n🟢 *Team Green* ({len(team3)})\n"
+    msg += "\n".join([f"  • {name}" for name in team3])
+    msg += "\n\n_Good luck everyone!_ 🏆"
+    
+    await query.answer("Teams selected!")
+    await query.edit_message_text(msg, parse_mode="Markdown")
+    
+    # Clear session data
+    context.user_data.pop("team_options", None)
+    context.user_data.pop("team_event_id", None)
+    context.user_data.pop("team_option_index", None)
+
+
 async def old_remove_friend_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Deprecated - keeping for reference
     query = update.callback_query
@@ -1409,6 +1577,11 @@ def main():
         per_message=False,
     )
     app.add_handler(edit_cost_conv)
+    
+    # Team generation handlers
+    app.add_handler(CallbackQueryHandler(teams_button_callback, pattern=r"^teams_\d+$"))
+    app.add_handler(CallbackQueryHandler(team_option_nav_callback, pattern=r"^teamopt_(prev|next|noop)$"))
+    app.add_handler(CallbackQueryHandler(team_select_callback, pattern=r"^teamopt_select_\d+$"))
 
     # Add person conversation
     add_conv = ConversationHandler(
