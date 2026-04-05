@@ -502,17 +502,19 @@ async def event_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if we have a target group (created from group, setup in DM)
     target_chat_id = context.user_data.get("target_chat_id")
-    target_topic_id = context.user_data.get("target_topic_id")
     
     if target_chat_id:
         # Event was created from group, post to group
         chat_id = target_chat_id
-        message_thread_id = target_topic_id
+        # Always use the configured events topic
+        settings = db.get_chat_settings(chat_id)
+        message_thread_id = settings.get("events_topic_id")
     else:
         # Event created directly in chat
         chat_id = update.effective_chat.id
-        message_thread_id = None
-        if hasattr(message, 'is_topic_message') and message.is_topic_message:
+        settings = db.get_chat_settings(chat_id)
+        message_thread_id = settings.get("events_topic_id")
+        if message_thread_id is None and hasattr(message, 'is_topic_message') and message.is_topic_message:
             message_thread_id = message.message_thread_id
     
     event_id = db.create_event(
