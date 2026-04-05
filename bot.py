@@ -724,13 +724,16 @@ async def add_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["add_event_id"] = event_id
     await query.answer()
     await query.message.reply_text(
-        "Type the name to add:\n\n(or /cancel to cancel)"
+        "Type the name(s) to add:\n\n"
+        "💡 Tip: Use commas to add multiple people\n"
+        "Example: John, Mary, Tom\n\n"
+        "(or /cancel to cancel)"
     )
     return ADD_FRIEND_NAME
 
 
 async def add_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.message.text.strip()
+    input_text = update.message.text.strip()
     event_id = context.user_data.get("add_event_id")
     
     if not event_id:
@@ -743,23 +746,50 @@ async def add_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return ConversationHandler.END
     
+    # Split by comma and clean up names
+    names = [name.strip() for name in input_text.split(",") if name.strip()]
+    
+    if not names:
+        await update.message.reply_text("Please enter at least one name.")
+        return ADD_FRIEND_NAME
+    
     participants = db.get_participants(event_id)
-    if len(participants) >= event["max_players"]:
+    spots_left = event["max_players"] - len(participants)
+    
+    if spots_left <= 0:
         await update.message.reply_text("Event is full!")
         context.user_data.clear()
         return ConversationHandler.END
     
-    success = db.add_guest(event_id, name, update.effective_user.id)
+    # Add as many as we can
+    added = []
+    skipped = []
     
-    if success:
+    for name in names:
+        if len(added) >= spots_left:
+            skipped.append(name)
+            continue
+        
+        success = db.add_guest(event_id, name, update.effective_user.id)
+        if success:
+            added.append(name)
+        else:
+            skipped.append(name)
+    
+    # Build response message
+    if added:
         participants = db.get_participants(event_id)
+        response = f"✅ Added {len(added)} player(s): {', '.join(added)}"
+        if skipped:
+            response += f"\n⚠️ Skipped (event full or error): {', '.join(skipped)}"
+        response += "\n\n" + format_event_message(event, participants)
         await update.message.reply_text(
-            f"✅ Added {name}!\n\n" + format_event_message(event, participants),
+            response,
             reply_markup=get_event_keyboard(event_id)
         )
         trigger_backup()
     else:
-        await update.message.reply_text("Failed to add. Please try again.")
+        await update.message.reply_text("Failed to add anyone. Please try again.")
     
     context.user_data.clear()
     return ConversationHandler.END
