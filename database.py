@@ -1,8 +1,11 @@
 import sqlite3
+import os
 from datetime import datetime
 from typing import Optional
 
-DB_PATH = "soccer_bot.db"
+# Use /data for Railway persistent volume, fallback to local for development
+DATA_DIR = "/data" if os.path.exists("/data") else "."
+DB_PATH = os.path.join(DATA_DIR, "soccer_bot.db")
 
 
 def get_connection():
