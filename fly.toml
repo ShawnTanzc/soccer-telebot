@@ -1,0 +1,12 @@
+app = "soccer-telebot"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[mounts]
+  source = "soccer_data"
+  destination = "/data"
+
+[env]
+  DATA_DIR = "/data"

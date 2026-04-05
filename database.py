@@ -3,8 +3,8 @@ import os
 from datetime import datetime
 from typing import Optional
 
-# Use /data for Railway persistent volume, fallback to local for development
-DATA_DIR = "/data" if os.path.exists("/data") else "."
+# Use /data for persistent volume (Fly.io), fallback to local for development
+DATA_DIR = os.environ.get("DATA_DIR", "/data" if os.path.exists("/data") else ".")
 DB_PATH = os.path.join(DATA_DIR, "soccer_bot.db")
 
 
