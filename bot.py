@@ -153,7 +153,11 @@ def get_max_players_keyboard():
 
 
 async def new_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
+    message = update.message or update.channel_post
+    if not message:
+        return ConversationHandler.END
+    
+    await message.reply_text(
         "⚽ Let's create a new event!\n\nSelect a date:",
         reply_markup=get_date_keyboard()
     )
@@ -1622,7 +1626,10 @@ def main():
     
     # Event creation conversation (button-based)
     event_conv = ConversationHandler(
-        entry_points=[CommandHandler("newevent", new_event_start)],
+        entry_points=[
+            CommandHandler("newevent", new_event_start),
+            MessageHandler(filters.UpdateType.CHANNEL_POST & filters.Regex(r'^/newevent'), new_event_start)
+        ],
         states={
             EVENT_DATE: [CallbackQueryHandler(event_date_callback, pattern=r"^(date_|cancel_)")],
             EVENT_TIME: [CallbackQueryHandler(event_time_callback, pattern=r"^(time_|cancel_)")],
